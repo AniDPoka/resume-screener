@@ -36,13 +36,21 @@ state = st.session_state
 
 # ---------- loading our own files (shared, because they hold only made-up sample data) ----------
 
+def stamp(*paths):
+    """When the files last changed. Passing this to a remembered function makes it load again after
+    a file changes: Streamlit Cloud updates the app in place, and without this it kept showing the
+    old copy of a data file (found on the live app, 2026-11-17)."""
+    return tuple(sorted((str(p), p.stat().st_mtime_ns) for path in paths
+                        for p in ([path] if path.is_file() else sorted(path.iterdir()))))
+
+
 @st.cache_data
-def load_json(name):
+def load_json(name, changed):
     return json.loads((DATA / name).read_text(encoding="utf-8"))
 
 
 @st.cache_data
-def load_samples():
+def load_samples(changed):
     return ingest.read_job(DATA / "job_description.txt"), ingest.read_folder(DATA / "resumes")
 
 
@@ -196,8 +204,9 @@ st.title("Resume screening loop with bias and fairness checks")
 st.info("Demo on made-up resumes. It suggests a reading order for a recruiter; a person makes every "
         "decision. Nobody is rejected automatically.")
 
-job, resumes = load_samples()
-demo, demo_audit, example = load_json("demo_run.json"), load_json("demo_audit.json"), load_json("simulated_example.json")
+job, resumes = load_samples(stamp(DATA / "job_description.txt", DATA / "resumes"))
+demo, demo_audit, example = (load_json(name, stamp(DATA / name))
+                             for name in ("demo_run.json", "demo_audit.json", "simulated_example.json"))
 
 shortlist_tab, live_tab, example_tab, how_tab = st.tabs(["Shortlist", "Try one live", "How flags are handled", "How it works"])
 

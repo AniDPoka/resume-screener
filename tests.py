@@ -405,4 +405,25 @@ try:
 finally:
     scorer.connect, scorer.groq_call = scorer_connect, scorer_call
 
+# A changed data file is loaded again, not remembered from before (the live-app bug).
+import os  # noqa: E402
+import time  # noqa: E402
+
+example_file = DATA / "simulated_example.json"
+before = (example_file.stat().st_atime, example_file.stat().st_mtime)
+app = AppTest.from_file("app.py", default_timeout=120)
+app.secrets["GROQ_API_KEY"] = ""
+app.run()
+original = example_file.read_text()
+try:
+    changed = json.loads(original)
+    changed["entry"]["final_score"] = 12.3
+    example_file.write_text(json.dumps(changed))
+    os.utime(example_file, (before[0], time.time() + 5))  # make sure the change time moves on
+    app.run()
+    assert any(m.value == "12.3" for m in app.metric), "the changed file is shown, not an old copy"
+finally:
+    example_file.write_text(original)
+    os.utime(example_file, before)
+
 print("All app checks passed.")
