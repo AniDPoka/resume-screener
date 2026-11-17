@@ -47,4 +47,70 @@ assert checks.quote_found("building dashboards and automating reports", hassan["
 result = checks.evidence_check(["Wrote SQL queries", "Led a team of 50"], priya)
 assert result == [{"quote": "Wrote SQL queries", "found": True}, {"quote": "Led a team of 50", "found": False}]
 
+# --- bias versions: each changes one thing only ---
+import re  # noqa: E402  (kept here so this section reads on its own)
+
+import variants  # noqa: E402
+
+for r in resumes:
+    text, who = r["text"], variants.person(r["text"])
+    assert who["first"] and who["gender"] in ("female", "male"), f"{r['name']}: name and gender found"
+    versions = variants.bias_versions(text)
+    assert versions == variants.bias_versions(text), "the same resume always gives the same versions"
+
+    # Lines that may change in each version. Every other line must stay exactly as it was.
+    signals = {
+        "name": [who["first"], who["last"], who["first"].lower()],
+        "gender": [who["first"], who["first"].lower()] + list(variants.TO_MALE) + list(variants.TO_FEMALE),
+        "age": ["graduated", "completed"],
+    }
+    for kind, version in versions.items():
+        old_lines, new_lines = text.splitlines(), version["text"].splitlines()
+        assert len(old_lines) == len(new_lines), f"{r['name']} {kind}: no lines added or removed"
+        changed = [(a, b) for a, b in zip(old_lines, new_lines) if a != b]
+        assert changed, f"{r['name']} {kind}: something did change"
+        for old, _ in changed:
+            assert any(re.search(rf"\b{re.escape(s)}\b", old, re.IGNORECASE) for s in signals[kind]), \
+                f"{r['name']} {kind}: an unexpected line changed: {old}"
+        # The Skills line has no name, pronoun or year, so a quote from it works in every version.
+        skills = old_lines[-1]
+        assert checks.quote_found(skills, version["text"]), f"{r['name']} {kind}: evidence still found"
+
+priya = resumes[0]["text"]
+assert variants.name_version(priya)["text"].startswith("Name: Emily Walker\nEmail: emily.walker@example.com")
+he = variants.gender_version(priya)["text"]
+assert "Name: Arjun Raman" in he and "He builds monthly" in he and "She" not in he
+assert "graduated 1999" in variants.age_version(priya)["text"], "a recent graduation moves 20 years earlier"
+assert "(2021 - present)" in variants.age_version(priya)["text"], "job dates are left alone"
+margaret = resumes[4]["text"]
+assert "graduated 2012" in variants.age_version(margaret)["text"], "an old graduation moves 20 years later"
+assert "over 30 years of experience" in variants.age_version(margaret)["text"], "experience is a qualification, kept"
+assert "She" in variants.gender_version(resumes[3]["text"])["text"], "works on PDF text too (Mohammed -> Fatima)"
+assert "Name: Fatima Hassan" in variants.gender_version(resumes[3]["text"])["text"]
+assert variants.keep_capital("She", "he") == "He" and variants.keep_capital("she", "he") == "he"
+
+# A resume with no name, pronouns or year is left alone, with a note saying why.
+plain = "Skills\nExcel"
+for version in variants.bias_versions(plain).values():
+    assert version["text"] == plain and "not changed" in version["changes"][0]
+
+# --- anonymised version: nothing that points to the person ---
+for r in resumes:
+    who = variants.person(r["text"])
+    anon = variants.anonymised(r["text"])
+    a = anon["text"]
+    for word in (who["first"], who["last"]):
+        assert not re.search(rf"\b{word}\b", a, re.IGNORECASE), f"{r['name']}: name removed"
+    assert "@" not in a and "07700" not in a and "Address" not in a, f"{r['name']}: contact details removed"
+    assert not variants.PRONOUN.search(a), f"{r['name']}: no he/she words left"
+    assert not variants.GRADUATION.search(a), f"{r['name']}: no graduation year left"
+    assert a.startswith("Summary"), f"{r['name']}: starts at the Summary"
+    assert checks.quote_found(r["text"].splitlines()[-1], a), f"{r['name']}: skills quote still found"
+    assert anon == variants.anonymised(r["text"]), "always the same result"
+
+anon_priya = variants.anonymised(priya)["text"]
+assert "The candidate is an HR data analyst" in anon_priya and "The candidate builds monthly" in anon_priya
+assert "BSc Business Management, University of Ashcombe\n" in anon_priya, "', graduated 2019' removed cleanly"
+assert "looking for the candidate's first HR analytics role" in variants.anonymised(resumes[6]["text"])["text"]
+
 print("All checks passed.")

@@ -70,8 +70,22 @@ The owner is new to Python and is building this as a portfolio project for HR an
 .venv/bin/python tests.py               # checks that need no AI key
 ```
 
-`.venv` was made with uv (Python 3.12). Run `tests.py` after every change to `ingest.py` or
-`checks.py`. When you fix a bug, add a check for it there.
+`.venv` was made with uv (Python 3.12). Run `tests.py` after every change to `ingest.py`,
+`checks.py` or `variants.py`. When you fix a bug, add a check for it there.
+
+## Known limits
+
+- `variants.py` finds the person from the `Name:` line and he/she words. A resume without a
+  `Name:` line, or with unusual layout, may not be fully swapped or anonymised; the version's
+  `changes` list says when something was not changed.
+- Background and gender of a first name come from a short fixed list (`NAME_GROUPS`). Names not in
+  it count as "unknown" and are treated like UK-majority names.
+- "her" is always swapped to "his" (its usual meaning in a resume), so "I thanked her" would read
+  wrongly. The samples do not use it that way.
+- Age version: only graduation years move, so some versions look odd (graduated 1999, first job
+  2019). Job dates and years of experience are real qualifications and are left alone.
+- Anonymised version: wording such as "recent graduate" or "Summer 2025" still hints at age.
+  Rules cannot catch every phrase; a person should know this.
 
 ## Rules
 
