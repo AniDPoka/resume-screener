@@ -1,0 +1,23 @@
+Name: Priya Raman
+Email: priya.raman@example.com
+Phone: 07700 900101
+Address: 14 Larkfield Road, Brindlemouth, BR4 7QT
+
+Summary
+Priya is an HR data analyst with 5 years of experience in people analytics. She builds monthly
+headcount and attrition dashboards in Power BI for senior managers.
+
+Experience
+HR Data Analyst, Calderwood Retail (2021 - present)
+- Built monthly attrition and absence dashboards in Power BI used by 40 managers
+- Wrote SQL queries against the Workday reporting database
+- Ran the yearly GDPR data audit for employee records
+HR Assistant, Fenmoor Council (2019 - 2021)
+- Kept the headcount report in Excel using pivot tables and XLOOKUP
+
+Education
+BSc Business Management, University of Ashcombe, graduated 2019
+CIPD Level 5 Associate Diploma in People Management, 2022
+
+Skills
+Advanced Excel (pivot tables, XLOOKUP), SQL, Power BI, Workday, GDPR

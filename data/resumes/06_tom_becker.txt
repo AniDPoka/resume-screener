@@ -1,0 +1,19 @@
+Name: Tom Becker
+Email: tom.becker@example.com
+Phone: 07700 900106
+Address: 8 Market Row, Dunlow, DN3 6HS
+
+Summary
+Tom is a retail store supervisor with 6 years of experience leading shift teams.
+
+Experience
+Store Supervisor, Penny Lane Foods (2019 - present)
+- Wrote weekly staff rotas for a team of 25
+- Tracked lateness in a shared spreadsheet
+- Trained new starters on till and safety procedures
+
+Education
+BTEC Level 3 Business, Dunlow College, completed 2018
+
+Skills
+Team leadership, rota planning, basic Excel, customer service

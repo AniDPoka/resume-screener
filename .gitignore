@@ -1,0 +1,9 @@
+# The AI key lives here. Never commit it.
+.streamlit/secrets.toml
+# One audit file per run; these stay on your computer.
+audit_logs/
+# Python's own working files
+.venv/
+__pycache__/
+*.pyc
+.DS_Store

@@ -1,0 +1,19 @@
+Name: Aisha Bello
+Email: aisha.bello@example.com
+Phone: 07700 900107
+Address: Flat 2, 40 College Road, Brindlemouth, BR1 2EX
+
+Summary
+Aisha is a recent psychology graduate looking for her first HR analytics role.
+
+Experience
+HR Intern, Calderwood Retail (Summer 2025)
+- Cleaned survey data in Excel for the engagement report
+- Made charts for the intern project presentation
+
+Education
+BSc Psychology, University of Ashcombe, graduated 2025
+- Dissertation used SPSS to analyse student wellbeing survey data
+
+Skills
+Excel, SPSS, survey design, presentations

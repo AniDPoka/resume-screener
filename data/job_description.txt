@@ -1,0 +1,18 @@
+Job title: HR Data Analyst
+Team: People Analytics, Northbridge Logistics (fictional company)
+
+About the role
+You will turn HR data into clear reports that help managers make fair decisions about their teams.
+
+Must-have:
+- At least 2 years of experience working with HR or people data
+- Advanced Excel (pivot tables, lookups)
+- Building regular reports or dashboards for managers
+- Working knowledge of data protection (GDPR) when handling employee data
+
+Nice-to-have:
+- SQL
+- Power BI or Tableau
+- Python
+- Experience with an HR system such as Workday or SAP SuccessFactors
+- CIPD qualification

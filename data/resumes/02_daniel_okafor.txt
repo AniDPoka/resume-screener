@@ -1,0 +1,22 @@
+Name: Daniel Okafor
+Email: daniel.okafor@example.com
+Phone: 07700 900102
+Address: 3 Quarry Lane, Holtsby, HB2 9LP
+
+Summary
+Daniel is a people analytics specialist with 4 years of experience. He automates HR reporting
+with Python and SQL and presents findings to leadership.
+
+Experience
+People Analytics Specialist, Greystone Health (2022 - present)
+- Automated the weekly recruitment report with Python, saving 6 hours a week
+- Built Tableau dashboards on turnover and time-to-hire for hospital managers
+- Wrote data-handling guidance for the team in line with GDPR
+Reporting Analyst, Greystone Health (2020 - 2022)
+- Maintained Excel models with pivot tables and VLOOKUP for HR and finance
+
+Education
+MSc Data Science, Northfield Institute, graduated 2020
+
+Skills
+Python, SQL, Tableau, Advanced Excel, SAP SuccessFactors, GDPR

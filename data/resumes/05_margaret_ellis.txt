@@ -1,0 +1,23 @@
+Name: Margaret Ellis
+Email: margaret.ellis@example.com
+Phone: 07700 900105
+Address: 51 Orchard Way, Pennick, PN8 4AF
+
+Summary
+Margaret is an HR manager with over 30 years of experience. She has produced the quarterly
+workforce report for the board for the last 12 years.
+
+Experience
+HR Manager, Ridgeway Engineering (2008 - present)
+- Produced the quarterly workforce report for the board using Excel pivot tables
+- Led the company's move to SAP SuccessFactors in 2019
+- Wrote the employee data retention policy when GDPR came into force
+HR Officer, Ridgeway Engineering (1994 - 2008)
+- Kept staff records and salary data in Excel and Access
+
+Education
+BA History, University of Ashcombe, graduated 1992
+CIPD Chartered Member
+
+Skills
+Excel (pivot tables, VLOOKUP), SAP SuccessFactors, GDPR, workforce planning

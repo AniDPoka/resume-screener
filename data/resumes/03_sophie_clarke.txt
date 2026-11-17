@@ -1,0 +1,22 @@
+Name: Sophie Clarke
+Email: sophie.clarke@example.com
+Phone: 07700 900103
+Address: 27 Willow Crescent, Marston Vale, MV1 3RD
+
+Summary
+Sophie is an HR advisor with 3 years of experience. She prepares the monthly people report
+for the leadership team and supports managers with absence cases.
+
+Experience
+HR Advisor, Brookhaven Hotels (2022 - present)
+- Prepared the monthly people report in Excel for the leadership team
+- Used pivot tables to track sickness absence by site
+- Answered subject access requests under GDPR
+HR Administrator, Brookhaven Hotels (2021 - 2022)
+- Updated employee records in the HR system
+
+Education
+BA Psychology, University of Ashcombe, graduated 2021
+
+Skills
+Excel (pivot tables), employee relations, absence management, GDPR
