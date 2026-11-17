@@ -73,6 +73,14 @@ The owner is new to Python and is building this as a portfolio project for HR an
 `.venv` was made with uv (Python 3.12). Run `tests.py` after every change to `ingest.py`,
 `checks.py` or `variants.py`. When you fix a bug, add a check for it there.
 
+## Measured with the real AI (2026-11-17, gpt-oss-120b, temperature 0)
+
+`try_one.py` on Priya, Margaret and Liam: 6 calls each, about 11,000-14,000 tokens and 50-90
+seconds per resume (about 630 tokens sent and 900-1,500 back per call; the model's thinking is
+most of the reply). Scores 94 / 82 / 26.2, identical across the 3 runs and all 3 bias versions, so
+no flags. Every quote passed the evidence check. A full 8-resume run should be roughly 100,000
+tokens, about half the free daily allowance.
+
 ## Known limits
 
 - `variants.py` finds the person from the `Name:` line and he/she words. A resume without a

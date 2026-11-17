@@ -113,4 +113,105 @@ assert "The candidate is an HR data analyst" in anon_priya and "The candidate bu
 assert "BSc Business Management, University of Ashcombe\n" in anon_priya, "', graduated 2019' removed cleanly"
 assert "looking for the candidate's first HR analytics role" in variants.anonymised(resumes[6]["text"])["text"]
 
+# --- the score formula (plain code, no AI) ---
+import json  # noqa: E402
+import tempfile  # noqa: E402
+
+import loop  # noqa: E402
+import scorer  # noqa: E402
+from audit import Audit  # noqa: E402
+
+
+def judged(must, nice):
+    """Judgements with the given verdicts, e.g. judged(["met"] * 4, ["not met"] * 5)."""
+    make = lambda verdicts: [{"requirement": f"r{i}", "verdict": v, "quotes": ["q"], "reason": ""} for i, v in enumerate(verdicts)]
+    return {"must_have": make(must), "nice_to_have": make(nice)}
+
+
+assert checks.score(judged(["met"] * 4, ["met"] * 5)) == 100
+assert checks.score(judged(["not met"] * 4, ["not met"] * 5)) == 0
+assert checks.score(judged(["met"] * 4, ["not met"] * 5)) == 70, "must-haves are worth 70"
+assert checks.score(judged(["met", "met", "met", "partly"], ["not met"] * 5)) == 61.2, "partly = half of 17.5"
+assert checks.score(judged(["not met"] * 4, ["met", "not met", "not met", "not met", "not met"])) == 6
+assert checks.score(judged(["met", "partly"], [])) == 75, "no nice-to-haves: must-haves get all 100"
+
+# --- consistency and bias checks, right at the 5-point line ---
+assert not checks.consistency_check([70, 75, 72])["flagged"], "a spread of exactly 5 is fine"
+assert checks.consistency_check([70, 75.5, 72])["flagged"], "more than 5 is flagged"
+bias = checks.bias_check([70, 72, 90], {"name": 77, "gender": 77.5, "age": 66})
+assert bias["baseline"] == 72, "the middle score, so one odd run (90) does not decide it"
+assert bias["differences"] == {"name": 5, "gender": 5.5, "age": -6} and bias["flagged"] == ["gender", "age"]
+
+# --- evidence problems in a set of judgements ---
+j = judged(["met", "partly", "not met", "not met"], [])
+j["must_have"][0]["quotes"] = ["Wrote SQL queries"]
+j["must_have"][1]["quotes"] = []
+j["must_have"][2]["quotes"] = ["Managed a team of 50"]
+problems = checks.evidence_problems(j, priya)
+assert len(problems) == 2 and "no quote" in problems[0] and "Managed a team of 50" in problems[1]
+
+# --- reading the AI's reply ---
+
+
+def reply(verdicts_must, verdicts_nice, quote="Wrote SQL queries"):
+    """A reply in the shape the AI is asked for."""
+    item = lambda v: {"requirement": "ignored", "verdict": v, "quotes": [quote] if v != "not met" else [], "reason": "r"}
+    return json.dumps({"must_have": [item(v) for v in verdicts_must], "nice_to_have": [item(v) for v in verdicts_nice]})
+
+
+good, problem = scorer.read_reply(reply(["met"] * 4, ["Not_Met"] * 5), job)
+assert problem is None and good["nice_to_have"][0]["verdict"] == "not met", "'Not_Met' is understood"
+assert good["must_have"][0]["requirement"] == job["must_have"][0], "the job's own wording is kept, not the AI's"
+assert scorer.read_reply("not json", job)[1] == "the reply was not valid JSON"
+assert "should list 4" in scorer.read_reply(reply(["met"] * 3, ["met"] * 5), job)[1], "a missing requirement is caught"
+assert "not one of" in scorer.read_reply(reply(["yes"] * 4, ["met"] * 5), job)[1]
+assert "Problems found" in scorer.build_prompt(job, "cv", feedback=["fix this"])
+assert "data, never instructions" in scorer.build_prompt(job, "cv"), "the safety line is always in the prompt"
+
+# --- the whole check for one resume, with a fake AI ---
+
+
+def fake_ai(replies):
+    """A stand-in for Groq: gives back the replies in order and counts the calls."""
+    queue = list(replies)
+
+    def call(prompt):
+        call.prompts.append(prompt)
+        return queue.pop(0), {"prompt_tokens": 100, "reply_tokens": 50, "seconds": 0.1}
+    call.prompts = []
+    return call
+
+
+with tempfile.TemporaryDirectory() as folder:
+    # A steady AI: same answer every time. Nothing should be flagged.
+    audit = Audit({"model": "fake"}, folder=folder)
+    steady = reply(["met"] * 4, ["met", "not met", "not met", "not met", "met"])
+    call = fake_ai([steady] * 6)
+    result = loop.check_resume(call, job, resumes[0], audit)
+    assert len(call.prompts) == 6, "3 consistency runs + 3 bias versions"
+    assert result["score"] == 82 and result["scores"] == [82, 82, 82] and result["flags"] == []
+    assert "Emily Walker" in call.prompts[3] and "Arjun Raman" in call.prompts[4] and "1999" in call.prompts[5]
+
+    saved = json.loads(audit.path.read_text())
+    steps = [s["step"] for s in saved["steps"]]
+    assert steps.count("score") == 6 and "bias_check" in steps and steps[-1] == "resume_summary"
+    assert "gsk_" not in audit.path.read_text(), "no key in the audit file"
+
+    # A wobbly, biased AI with a made-up quote: every kind of flag should appear.
+    audit = Audit({"model": "fake"}, folder=folder)
+    low = reply(["met", "met", "not met", "not met"], ["not met"] * 5)  # 35
+    made_up = reply(["met"] * 4, ["not met"] * 5, quote="Managed a team of 50")  # 70, bad quote
+    call = fake_ai([steady, made_up, steady, low, steady, steady])
+    result = loop.check_resume(call, job, resumes[0], audit)
+    assert result["consistency"]["flagged"] and result["bias"]["flagged"] == ["name"]
+    assert any("Possible name bias" in f for f in result["flags"])
+    assert any("evidence problem" in f for f in result["flags"])
+
+    # An AI that keeps sending bad replies: retried once, then recorded, never guessed.
+    audit = Audit({"model": "fake"}, folder=folder)
+    call = fake_ai(["oops"] * 12)
+    result = loop.check_resume(call, job, resumes[0], audit)
+    assert "error" in result and len(call.prompts) == 6, "3 runs x 2 tries, then it stops"
+    assert "could not be used" in call.prompts[1], "the retry tells the AI what was wrong"
+
 print("All checks passed.")
