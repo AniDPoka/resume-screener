@@ -83,6 +83,8 @@ No name, gender or age version scored outside the original's own range.
 
 ## Try it
 
+**Live app: https://anidpoka-resume-screener.streamlit.app**
+
 The live app has four tabs: the saved shortlist, one resume run live, a clearly labelled
 **simulated** example of a resume that needs several revise rounds, and a plain-English explanation.
 

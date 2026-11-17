@@ -123,6 +123,14 @@ injection in resumes). Added, with the owner's approval:
   still the Phase 4/5 run, so the Shortlist tab lacks the new columns until then. recheck_demo.py
   cannot replay it, because the new versions need answers that were never recorded.
 
+## Live app
+
+- https://anidpoka-resume-screener.streamlit.app (Streamlit Community Cloud, Python 3.12, deployed
+  2026-11-17 from AniDPoka/resume-screener `main`; `GROQ_API_KEY` is in the app's Secrets box).
+  Pushing to `main` updates it within a minute or two.
+- Data files are loaded through `load_json(name, stamp(...))` / `load_samples(stamp(...))`: the change
+  time is part of the cache key. Without it the live app kept old copies after an in-place update.
+
 ## Known limits
 
 - `variants.py` finds the person from the `Name:` line and he/she words. A resume without a
