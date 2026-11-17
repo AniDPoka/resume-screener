@@ -402,6 +402,19 @@ try:
     assert any("used its 2 live runs" in w.value for w in app.warning), "a third run in one visit is refused"
     assert not [b for b in app.button if "Run the loop" in b.label]
     assert not any("<script>" in m.value for m in app.markdown), "AI text never reaches the page as HTML"
+
+    # A run that is cancelled part-way (the visitor changed something on the page) is not counted.
+    from streamlit.runtime.scriptrunner_utils.exceptions import StopException
+
+    def cancelled(prompt):
+        raise StopException()  # what Streamlit does to a run when the visitor changes the page
+    scorer.groq_call = lambda client: cancelled
+    app = AppTest.from_file("app.py", default_timeout=120)
+    app.secrets["GROQ_API_KEY"] = "fake-key-for-tests"
+    app.run()
+    [b for b in app.button if "Run the loop" in b.label][0].click().run()
+    assert "live_runs" not in app.session_state, "a cancelled run does not use up one of the visit's runs"
+    assert [b for b in app.button if "Run the loop" in b.label], "so the Run button is still there"
 finally:
     scorer.connect, scorer.groq_call = scorer_connect, scorer_call
 

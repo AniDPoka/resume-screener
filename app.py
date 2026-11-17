@@ -76,6 +76,15 @@ def person_name(file_name):
     return " ".join(p.capitalize() for p in parts)
 
 
+def plain_step(message):
+    """A progress message in plain words: '01_priya_raman.txt: scoring the gap version' ->
+    'Priya Raman: scoring the career-break version'."""
+    name, _, rest = message.partition(": ")
+    for kind, label in VERSION_LABELS.items():
+        rest = rest.replace(f"the {kind} version", f"the {label} version")
+    return safe(f"{person_name(name)}: {rest}")
+
+
 def points(value):
     return "–" if value is None else f"{value:g}"
 
@@ -242,19 +251,24 @@ with live_tab:
             st.warning("Today's live runs are used up (they share a small free AI allowance). "
                        "The Shortlist tab shows a full saved run. Please try again tomorrow.")
         else:
-            state["live_runs"] = used + 1
-            with tempfile.TemporaryDirectory() as folder, st.status("Running the loop…", expanded=True) as status:
+            label = "Running the loop… (2–4 minutes. Please stay on this tab and don't change the resume: that restarts it.)"
+            with tempfile.TemporaryDirectory() as folder, st.status(label, expanded=True) as status:
                 # The audit file goes to a temporary folder: it is offered as a download, not kept.
                 audit = Audit(loop.settings(), folder=folder)
                 try:
                     call = scorer.groq_call(scorer.connect(key))
-                    entry = loop.screen_resume(call, job, resume, audit, on_step=lambda m: status.write(safe(m)))
+                    entry = loop.screen_resume(call, job, resume, audit, on_step=lambda m: status.write(plain_step(m)))
                     state["live"] = {"entry": entry, "record": audit.record}
                     status.update(label="Done", state="complete", expanded=False)
                 except Exception as error:
                     audit.log("stopped", reason=f"AI service error: {type(error).__name__}")
                     state["live"] = {"error": type(error).__name__, "record": audit.record}
                     status.update(label="The AI service stopped the run", state="error")
+            # Counted only now, when the run has finished. If the visitor changes something on the page
+            # mid-run, Streamlit cancels the run with a signal that skips this line, so a cancelled run
+            # does not use up one of the visit's runs. (Before, it was counted at the start: a visitor
+            # who changed the resume mid-run lost a run and saw no result.)
+            state["live_runs"] = used + 1
             # Redraw the page now, so the run count (and the limit message, if reached) is up to date.
             # Kept outside the try/except above, because st.rerun works by raising a special signal.
             st.rerun()

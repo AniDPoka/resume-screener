@@ -101,6 +101,10 @@ scores, and the 3 false bias flags are gone. Use it whenever a check rule change
   in `safety.py`, numbers only). No uploads on the public app. Live audit files go to a temporary
   folder and are offered as a download, never kept.
 - Resume and AI text is shown through `safe()` or in `st.table`, never as HTML.
+- A live run is counted for the visit only when it FINISHES. Changing anything on the page mid-run
+  makes Streamlit cancel the run with a BaseException (`StopException`/`RerunException`) that skips
+  the rest of the code. Counting at the start made a visitor lose a run and see no result (reported
+  by the owner on the live app, 2026-11-17). The status box says to stay on the tab while it runs.
 - After a live run the page calls `st.rerun()` (outside the try/except), so the run count and the
   limit message are up to date at once. The headless test found the stale Run button that this fixes.
 
