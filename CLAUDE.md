@@ -67,7 +67,8 @@ The owner is new to Python and is building this as a portfolio project for HR an
 
 ```
 .venv/bin/python data/make_resumes.py   # rebuilds the job description and 8 sample resumes
-.venv/bin/python tests.py               # checks that need no AI key
+.venv/bin/python tests.py               # all checks, incl. the app headless; no AI key needed
+.venv/bin/streamlit run app.py          # the web page
 ```
 
 `.venv` was made with uv (Python 3.12). Run `tests.py` after every change to `ingest.py`,
@@ -91,6 +92,17 @@ verdict, 8.7-8.8 points), so they were noise, not bias.
 than 5 points OUTSIDE the range of the original's own scores (not 5 points from its middle score).
 `recheck_demo.py` replayed the 71 saved AI answers through the new rule with no AI calls: same
 scores, and the 3 false bias flags are gone. Use it whenever a check rule changes.
+
+## The app (Phase 5)
+
+- Tabs: Shortlist (saved real run, no AI), Try one live (real AI), How flags are handled (the
+  simulated example, always labelled), How it works.
+- Live runs: 2 per visit (`RUNS_PER_VISIT`), 5 per day app-wide (`RUNS_PER_DAY`, `DailyAllowance`
+  in `safety.py`, numbers only). No uploads on the public app. Live audit files go to a temporary
+  folder and are offered as a download, never kept.
+- Resume and AI text is shown through `safe()` or in `st.table`, never as HTML.
+- After a live run the page calls `st.rerun()` (outside the try/except), so the run count and the
+  limit message are up to date at once. The headless test found the stale Run button that this fixes.
 
 ## Known limits
 

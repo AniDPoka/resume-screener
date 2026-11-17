@@ -1,0 +1,19 @@
+# Colours shared with Roster Lens, the owner's other project.
+[theme]
+base = "light"
+primaryColor = "#1f5fd6"
+backgroundColor = "#f5f9ff"
+secondaryBackgroundColor = "#e6efff"
+textColor = "#14315c"
+
+# Privacy: no usage statistics are sent to Streamlit, and error messages never show details.
+[browser]
+gatherUsageStats = false
+
+[client]
+showErrorDetails = "none"
+toolbarMode = "minimal"
+
+[server]
+# The public app takes no uploads, so keep the limit tiny.
+maxUploadSize = 1

@@ -258,3 +258,50 @@ assert [p["rank"] for p in ranked] == [1, 2, 3, 4] and len(ranked) == len(people
 assert json.loads(json.dumps(ranked)) == ranked, "the shortlist saves to a file and reads back the same"
 
 print("All checks passed.")
+
+# --- Phase 5: safety helpers ---
+from safety import DailyAllowance, safe  # noqa: E402
+
+assert safe("<script>x</script>") == "\\<script\\>x\\</script\\>", "HTML signs are shown, not obeyed"
+assert safe("![pic](http://x)").startswith("\\!\\[pic\\]"), "a Markdown picture is shown as text"
+allowance = DailyAllowance(2)
+assert allowance.take(now=0) and allowance.take(now=0) and not allowance.take(now=0), "2 a day, then no more"
+assert allowance.take(now=2 * 86400), "a new day starts again"
+
+# --- Phase 5: the whole app, headless (no key, no real AI) ---
+from streamlit.testing.v1 import AppTest  # noqa: E402
+
+app = AppTest.from_file("app.py", default_timeout=120)
+app.secrets["GROQ_API_KEY"] = ""  # no key: live runs must be switched off, and no AI is called
+app.run()
+assert not app.exception
+assert len(app.tabs) == 4
+names = [m.value for m in app.markdown if m.value.startswith("**#")]
+assert names[:3] == ["**#1  Priya Raman**", "**#2  Daniel Okafor**", "**#3  Margaret Ellis**"] and len(names) >= 8, \
+    "the saved shortlist opens straight away, in rank order, with everyone listed"
+assert any("switched off" in w.value for w in app.warning), "no key: live runs are off, with a clear message"
+assert not [b for b in app.button if "Run the loop" in b.label], "no Run button without a key"
+assert any(e.value.startswith("**Simulated: not a real AI result.**") for e in app.error), "the example is always labelled"
+
+# A live run with a fake AI (scorer is patched, so nothing reaches Groq). The AI's reason contains
+# HTML, which must reach the page only as plain text.
+sneaky = json.loads(steady)
+sneaky["must_have"][0]["reason"] = "<script>alert('hi')</script>"
+scorer_connect, scorer_call = scorer.connect, scorer.groq_call
+scorer.connect = lambda key: None
+scorer.groq_call = lambda client: queue([json.dumps(sneaky)] * 20)
+try:
+    app = AppTest.from_file("app.py", default_timeout=120)
+    app.secrets["GROQ_API_KEY"] = "fake-key-for-tests"
+    app.run()
+    for run in range(2):
+        [b for b in app.button if "Run the loop" in b.label][0].click().run()
+        assert not app.exception and app.session_state["live_runs"] == run + 1
+    assert app.session_state["live"]["entry"]["final_score"] == 82
+    assert any("used its 2 live runs" in w.value for w in app.warning), "a third run in one visit is refused"
+    assert not [b for b in app.button if "Run the loop" in b.label]
+    assert not any("<script>" in m.value for m in app.markdown), "AI text never reaches the page as HTML"
+finally:
+    scorer.connect, scorer.groq_call = scorer_connect, scorer_call
+
+print("All app checks passed.")
