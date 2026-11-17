@@ -104,6 +104,25 @@ scores, and the 3 false bias flags are gone. Use it whenever a check rule change
 - After a live run the page calls `st.rerun()` (outside the try/except), so the run count and the
   limit message are up to date at once. The headless test found the stale Run button that this fixes.
 
+## Phase 6 (2026-11-17): employer-style marking and more bias tests
+
+Researched how ATS systems and employers screen (knockout questions, employer-configured keyword or
+semantic matching, structured scorecards, NYC impact ratios, LLM name-bias studies, hidden prompt
+injection in resumes). Added, with the owner's approval:
+- Marking guide: indented `met:`, `partly:`, `keywords:` lines under each requirement in the job file
+  (`ingest.requirements` -> `job["guide"]`). met/partly go to the AI; keywords never do.
+- Claimed vs demonstrated (`checks.apply_evidence_rule`, used in `loop.score_once`): "met" needs a quote
+  found under Experience/Education; otherwise code makes it "partly" and keeps `ai_verdict`.
+- Keyword-ATS comparison (`checks.keyword_score`): whole-word match, plural allowed; display only.
+- Must-have count (`checks.must_haves_met`): shown, never filters.
+- Hidden text and AI orders (`ingest.split_hidden_text`, `find_instructions`): white/tiny/invisible PDF
+  text is removed from what the AI sees; any order to an AI -> needs human review. Sample: 09_ryan_cole.pdf.
+- Two more bias versions (`variants.gap_version`, `university_version`): 9 AI calls per resume now.
+- Impact ratios (`checks.impact_ratios`, `loop.impact_report`), saved in demo_run.json by run_all.py.
+- Not done yet: a new real run_all.py (about 190,000 tokens, a full free day). data/demo_run.json is
+  still the Phase 4/5 run, so the Shortlist tab lacks the new columns until then. recheck_demo.py
+  cannot replay it, because the new versions need answers that were never recorded.
+
 ## Known limits
 
 - `variants.py` finds the person from the `Name:` line and he/she words. A resume without a

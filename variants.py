@@ -4,6 +4,8 @@ Bias versions (each changes ONE thing, by a fixed rule, so a change in score has
   1. name_version:   a name from a different background, same gender
   2. gender_version: he/she swapped, plus a first name of the other gender from the same background
   3. age_version:    the graduation year moved by 20 years (job dates are left alone)
+  4. gap_version:    a one-year career break for caring is added (a common hidden-bias trigger)
+  5. university_version: the university becomes a non-UK one (a proxy for nationality or class)
 
 anonymised: name, contact details, he/she and graduation years removed. Used in the revise rounds.
 
@@ -17,7 +19,7 @@ import re
 # The first name in each list is the one used as a replacement. Surnames are used by name_version.
 # This is a short, fixed list on purpose: it is easy to read and to explain.
 NAME_GROUPS = {
-    "uk_majority": {"female": ["Emily", "Sophie", "Margaret"], "male": ["James", "Daniel", "Tom", "Liam"], "surname": "Walker"},
+    "uk_majority": {"female": ["Emily", "Sophie", "Margaret"], "male": ["James", "Daniel", "Tom", "Liam", "Ryan"], "surname": "Walker"},
     "south_asian": {"female": ["Priya", "Anjali"], "male": ["Arjun", "Rahul"], "surname": "Sharma"},
     "west_african": {"female": ["Amara", "Aisha"], "male": ["Chidi", "Tunde"], "surname": "Okoye"},
     "arab": {"female": ["Fatima", "Layla"], "male": ["Mohammed", "Omar"], "surname": "Rahman"},
@@ -28,6 +30,12 @@ MINORITY_GROUPS = ["south_asian", "west_african", "arab", "east_asian"]
 # How much the age version moves a graduation year, and the year that counts as "recent".
 AGE_SHIFT_YEARS = 20
 RECENT_YEAR = 2005
+
+# The career-break line and the replacement university used by versions 4 and 5.
+CAREER_BREAK = "Career break (1 year): caring for a family member"
+OTHER_UNIVERSITY = "University of Dhaka, Bangladesh"
+# "University of Ashcombe", "Saltmere University", "Northfield Institute", "Dunlow College"
+INSTITUTION = re.compile(r"\bUniversity of [A-Z][\w-]+|\b[A-Z][\w-]+ (?:University|Institute|College)\b")
 
 # Lines that only hold personal details. The anonymised version drops them.
 PERSONAL_LINES = ("Name:", "Email:", "Phone:", "Address:")
@@ -136,6 +144,42 @@ def age_version(text):
     return {"text": new_text, "changes": changes}
 
 
+def gap_version(text):
+    """Version 4: same resume plus one line at the end of Experience saying the person took a
+    one-year career break to care for a family member. Nothing is removed, so the qualifications
+    are unchanged; a lower score would mean the break itself was held against them."""
+    lines = text.splitlines()
+    starts = [i for i, line in enumerate(lines) if line.strip().lower().rstrip(":") == "experience"]
+    if not starts:
+        return {"text": text, "changes": ["No Experience heading found, so it was not changed."]}
+    end = next((i for i in range(starts[0] + 1, len(lines))
+                if lines[i].strip().lower().rstrip(":") in ("education", "skills", "summary")), len(lines))
+    while end > starts[0] + 1 and not lines[end - 1].strip():  # keep any blank line after the section
+        end -= 1
+    lines.insert(end, CAREER_BREAK)
+    return {"text": "\n".join(lines), "changes": [f"Added the line: {CAREER_BREAK}"]}
+
+
+def university_version(text):
+    """Version 5: same resume, but each university or college in Education becomes a non-UK one.
+    University names can stand in for nationality or social class, so the score should not move."""
+    changes = []
+
+    def swap(m):
+        changes.append(f"University: {m.group(0)} -> {OTHER_UNIVERSITY}")
+        return OTHER_UNIVERSITY
+
+    lines, in_education = [], False
+    for line in text.splitlines():
+        heading = line.strip().lower().rstrip(":")
+        if heading in ("education", "experience", "skills", "summary"):
+            in_education = heading == "education"
+        lines.append(INSTITUTION.sub(swap, line) if in_education else line)
+    if not changes:
+        return {"text": text, "changes": ["No university found under Education, so it was not changed."]}
+    return {"text": "\n".join(lines), "changes": changes}
+
+
 # ---------- the anonymised version ----------
 
 def anonymised(text):
@@ -188,5 +232,6 @@ def candidate(match, text):
 
 
 def bias_versions(text):
-    """The three bias versions of one resume, by name, ready for the bias check."""
-    return {"name": name_version(text), "gender": gender_version(text), "age": age_version(text)}
+    """The five bias versions of one resume, by name, ready for the bias check."""
+    return {"name": name_version(text), "gender": gender_version(text), "age": age_version(text),
+            "gap": gap_version(text), "university": university_version(text)}

@@ -26,7 +26,9 @@ from safety import DailyAllowance, safe
 HERE = Path(__file__).parent
 DATA = HERE / "data"
 RUNS_PER_VISIT = 2
-RUNS_PER_DAY = 5  # about 15,000-35,000 tokens each; Groq's free tier allows 200,000 a day
+RUNS_PER_DAY = 5
+VERSION_LABELS = {"name": "name", "gender": "gender", "age": "age", "gap": "career-break", "university": "university"}
+EVIDENCE_WORDS = {"demonstrated": "shown in use", "claimed": "claimed only", "none": "no quote found"}  # about 15,000-35,000 tokens each; Groq's free tier allows 200,000 a day
 
 st.set_page_config(page_title="Resume Screening Loop", page_icon="🔎", layout="wide")
 state = st.session_state
@@ -79,11 +81,18 @@ def steps_for(steps, resume):
 def show_candidate(entry, steps, key):
     """One candidate: score, status line, and (opened on click) the evidence and how it was checked."""
     with st.container(border=True):
-        left, middle, right = st.columns([3, 1, 1])
+        left, middle, right, ats = st.columns([2.2, 1, 1, 1])
         rank = f"#{entry['rank']}  " if "rank" in entry else ""
         left.markdown(f"**{rank}{safe(person_name(entry['resume']))}**")
+        must = entry.get("must_haves")
+        if must:
+            left.caption(f"Must-haves fully met: {must['met']} of {must['of']}"
+                         + ("" if must["all"] else " (still listed: nobody is removed)"))
         middle.metric("Final score", points(entry["final_score"]), help="From the anonymised resume (name, contact, gender and age signals removed)")
-        right.metric("Original score", points(entry["original_score"]), help="Middle of 3 scores of the resume as written")
+        right.metric("Original", points(entry["original_score"]), help="Middle of 3 scores of the resume as written")
+        if entry.get("keyword"):
+            ats.metric("Keyword ATS", points(entry["keyword"]["score"]),
+                       help="What a simple keyword filter would score, for comparison only. It is not used for the ranking.")
 
         if entry["needs_human_review"]:
             st.warning("Needs human review: " + "; ".join(safe(f) for f in entry["flags"]))
@@ -95,17 +104,34 @@ def show_candidate(entry, steps, key):
             st.success("No problems found.")
         for note in entry.get("notes", []):
             st.caption(safe(note))
+        if entry.get("hidden_text"):
+            with st.expander("Hidden text found in this file (not sent to the AI)"):
+                st.text(entry["hidden_text"])  # plain text, exactly as found
 
         with st.expander("Evidence and how it was checked"):
             if entry["judgements"]:
                 rows = []
                 for part, label in (("must_have", "Must-have"), ("nice_to_have", "Nice-to-have")):
                     for item in entry["judgements"][part]:
-                        rows.append({"Requirement": item["requirement"], "Type": label, "Verdict": item["verdict"],
-                                     "Evidence from the resume": " | ".join(item["quotes"]) or "–",
+                        verdict = item["verdict"]
+                        if item.get("ai_verdict") and item["ai_verdict"] != verdict:
+                            verdict += f" (AI said {item['ai_verdict']})"
+                        rows.append({"Requirement": item["requirement"], "Type": label, "Verdict": verdict,
+                                     "Evidence": EVIDENCE_WORDS.get(item.get("evidence"), "–"),
+                                     "Quote from the resume": " | ".join(item["quotes"]) or "–",
                                      "Reason": item["reason"]})
                 # st.table wraps long text and shows it as plain text (never as HTML).
                 st.table(pd.DataFrame(rows).set_index("Requirement"))
+                if any(i.get("evidence") for i in entry["judgements"]["must_have"]):
+                    st.caption("A skill counts as met only if it is shown being used (Experience or Education). "
+                               "If it is only claimed (Summary or Skills), code marks it partly, whatever the AI said.")
+            if entry.get("keyword"):
+                st.markdown("**What a keyword ATS would have done** (for comparison, not used for ranking):")
+                st.table(pd.DataFrame([
+                    {"Requirement": i["requirement"], "Keyword filter": i["verdict"],
+                     "Looked for": ", ".join(i["keywords"]), "Found": ", ".join(i["keywords_found"]) or "–"}
+                    for part in ("must_have", "nice_to_have") for i in entry["keyword"]["judgements"][part]
+                ]).set_index("Requirement"))
             show_checks(steps_for(steps, entry["resume"]))
 
 
@@ -118,14 +144,15 @@ def show_checks(steps):
         lines.append(f"**Consistency:** the resume was scored {len(originals)} times: {', '.join(originals)}.")
     bias = next((s for s in steps if s["step"] == "bias_check"), None)
     if bias:
-        versions = {s["version"]: s["score"] for s in scores if s["version"] in ("name", "gender", "age")}
+        versions = {s["version"]: s["score"] for s in scores if s["version"] in VERSION_LABELS}
         low, high = bias.get("range", [None, None])
-        parts = [f"{kind} version {points(v)}" for kind, v in versions.items()]
+        parts = [f"{VERSION_LABELS[kind]} version {points(v)}" for kind, v in versions.items()]
         verdict = "outside" if bias["flagged"] else "all within 5 points of"
         lines.append(f"**Bias check:** {', '.join(parts)}; {verdict} the original's range ({points(low)}–{points(high)}).")
         for s in steps:
             if s["step"] == "version_made" and s["version"] != "anonymised":
-                lines.append(f"  - {s['version']} version changed: " + "; ".join(safe(c) for c in s["changes"]))
+                label = VERSION_LABELS.get(s["version"], s["version"])
+                lines.append(f"  - {label} version changed: " + "; ".join(safe(c) for c in s["changes"]))
     evidence = next((s for s in steps if s["step"] == "evidence_check"), None)
     if evidence:
         lines.append("**Evidence check:** every quote was found in the resume." if not evidence["problems"] else
@@ -139,6 +166,23 @@ def show_checks(steps):
         lines.append(f"**Revise round {r['round']}:** the AI was told: {told} → scores "
                      f"{', '.join(points(x) for x in r['scores'])}, {outcome}.")
     st.markdown("\n\n".join(lines) if lines else "No checks were run.")
+
+
+def show_impact(report):
+    """The NYC-style impact ratios for the whole run, with the small-sample warning."""
+    if not report:
+        return
+    with st.expander("Bias audit across all candidates (impact ratio)"):
+        st.markdown("Each resume was also scored with a name from another background and with the other "
+                    "gender. As in a New York City bias audit, a group's *scoring rate* is the share of its "
+                    "scores above the middle score, and its *impact ratio* is that rate divided by the best "
+                    "group's. Below 0.8 is the usual warning sign (the four-fifths rule).")
+        for attribute, result in report.items():
+            st.markdown(f"**By {safe(attribute)}**")
+            st.table(pd.DataFrame([{"Group": g, "Scores": r["count"], "Average score": r["average"],
+                                    "Scoring rate": r["rate"], "Impact ratio": r["ratio"]}
+                                   for g, r in result["groups"].items()]).set_index("Group"))
+            st.caption(safe(result["warning"]))
 
 
 def download_audit(record, name, key):
@@ -164,13 +208,14 @@ with shortlist_tab:
     with st.expander("The job's requirements"):
         st.markdown("**Must-have:**\n" + "\n".join(f"- {safe(r)}" for r in job["must_have"]))
         st.markdown("**Nice-to-have:**\n" + "\n".join(f"- {safe(r)}" for r in job["nice_to_have"]))
+    show_impact(demo.get("impact"))
     for entry in demo["shortlist"]:
         show_candidate(entry, demo_audit["steps"], key=f"demo_{entry['resume']}")
     download_audit(demo_audit, "demo_audit.json", key="demo_audit")
 
 with live_tab:
     st.subheader("Run one resume through the whole loop")
-    st.caption("Uses the real AI: 7 calls, more if something is flagged. Takes 1–3 minutes.")
+    st.caption("Uses the real AI: 9 calls, more if something is flagged. Takes 2–4 minutes.")
     names = [r["name"] for r in resumes]
     chosen = st.selectbox("Sample resume", names, format_func=person_name)
     resume = resumes[names.index(chosen)]
@@ -225,28 +270,44 @@ with how_tab:
     st.markdown("""
 **The loop, for every resume**
 
-1. **Read.** Text only. A photo in a PDF is never read, so it never reaches the AI.
-2. **Score.** For each requirement the AI says *met*, *partly* or *not met* and quotes the resume.
+1. **Read.** Text only. A photo in a PDF is never read. Hidden text (white, tiny or invisible
+   letters) is split off and never sent to the AI, and any text giving orders to an AI ("ignore all
+   previous instructions...") sends the resume to a person.
+2. **Score.** For each requirement the AI says *met*, *partly* or *not met* and quotes the resume,
+   following a written marking guide (what counts as met, what counts as partly).
+   Code then checks where each quote comes from: a skill shown in use (Experience, Education) can be
+   *met*; a skill only claimed (Summary, Skills) is *partly*, whatever the AI said.
    Plain code turns that into 0–100: must-haves share 70 points, nice-to-haves 30; *partly* is half.
 3. **Check** (plain code, no AI):
    - *Evidence*: every quote must appear word for word in the resume.
    - *Consistency*: the resume is scored 3 times; more than 5 points apart is flagged.
-   - *Bias*: the same resume with a different name, the other gender, or a graduation year 20 years
-     away. Flagged if a version scores more than 5 points outside the original's own range.
+   - *Bias*: the same resume with a different name, the other gender, a graduation year 20 years
+     away, a one-year career break for caring, or a non-UK university. Flagged if a version scores
+     more than 5 points outside the original's own range.
 4. **Revise.** Every resume is also scored with its name, contact details, he/she words and
    graduation year removed: that is the final score. Flagged resumes get up to 3 more rounds, and each
    round tells the AI exactly which quote or requirement to fix.
-5. **Hand off.** Everyone is ranked; nobody is removed. Anything unsettled, and any sign of bias, is
-   marked *needs human review*.
+5. **Hand off.** Everyone is ranked; nobody is removed. Each candidate shows how many must-haves are
+   fully met (like an ATS knockout question, but nobody is filtered out). Anything unsettled, any sign
+   of bias, and any hidden instructions are marked *needs human review*.
+
+**Compared with a keyword ATS.** Each candidate also shows what a simple keyword filter would score.
+Keyword filters miss evidence written differently ("INDEX MATCH" is a lookup, "XLOOKUP" is not the
+word "lookup") and reward words without substance (an intern can "match" *2 years of HR data*). It is
+shown for comparison only.
+
+**Bias audit across all candidates.** The Shortlist tab reports impact ratios, the measure used in
+New York City bias audits: does one group's share of above-middle scores fall below 0.8 of the best
+group's? With a handful of resumes this demonstrates the method; it is not a finding.
 
 **Why the bias rule compares with a range.** Even at its steadiest setting the AI sometimes gives the
 same resume different scores. The first full run flagged 3 of 8 candidates for "bias" by exactly that
 amount. A version that scores what the original itself sometimes scores is not evidence of bias.
 
 **Limits**
-- Rules find names and he/she words from a fixed list; unusual layouts may slip through.
+- Rules find names, he/she words, headings and universities from fixed lists; unusual layouts may slip through.
 - Phrases such as "recent graduate" still hint at age after anonymising.
-- A clean bias check on 8 resumes is not proof the AI is unbiased in general.
+- A clean bias check on a few resumes is not proof the AI is unbiased in general.
 - Screening tools are regulated (New York City Local Law 144; the EU AI Act treats hiring tools as
   high-risk). This is a demo on made-up data, not a hiring tool.
 """)

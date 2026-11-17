@@ -2,6 +2,7 @@
 each requirement, and plain code does the maths and checks the AI's work.
 """
 
+import re
 from statistics import median
 
 # How the 0-100 score is made. Must-haves share 70 points, nice-to-haves share 30.
@@ -109,3 +110,112 @@ def evidence_problems(judgements, resume_text):
             if item["verdict"] != "not met" and not item["quotes"]:
                 problems.append(f"'{item['requirement']}': marked {item['verdict']} but no quote was given")
     return problems
+
+
+# ---------- claimed vs demonstrated ----------
+
+# Resume headings. Evidence under these shows the skill being USED (demonstrated) ...
+DEMONSTRATED_SECTIONS = ("experience", "education", "projects", "employment", "work history")
+# ... while under these it is the candidate's own description of themselves (claimed).
+CLAIMED_SECTIONS = ("summary", "profile", "skills", "about me")
+
+
+def sections(resume_text):
+    """Splits a resume into {heading: text} using lines that are just a known heading.
+    Returns {} if no headings are found (then we cannot tell claimed from demonstrated)."""
+    found, current = {}, None
+    for line in resume_text.splitlines():
+        heading = line.strip().lower().rstrip(":")
+        if heading in DEMONSTRATED_SECTIONS + CLAIMED_SECTIONS:
+            current = heading
+            found.setdefault(current, "")
+        elif current:
+            found[current] += line + "\n"
+    return found
+
+
+def evidence_type(quotes, resume_text):
+    """'demonstrated' if any quote is found under Experience or Education (or similar),
+    'claimed' if quotes are found only under Summary or Skills, 'none' if no quote is found at all.
+    If the resume has no recognisable headings, any found quote counts as demonstrated."""
+    parts = sections(resume_text)
+    found = [q for q in quotes if quote_found(q, resume_text)]
+    if not found:
+        return "none"
+    if not parts:
+        return "demonstrated"
+    for q in found:
+        if any(quote_found(q, parts[h]) for h in parts if h in DEMONSTRATED_SECTIONS):
+            return "demonstrated"
+    return "claimed"
+
+
+def apply_evidence_rule(judgements, resume_text):
+    """The AI's verdicts, checked against where its evidence comes from. A "met" is kept only if the
+    skill is DEMONSTRATED (quoted from Experience or Education). If the only evidence is a claim
+    (Summary or Skills), or no quote can be found, "met" becomes "partly". The AI's own verdict is
+    kept as "ai_verdict" so the change is visible. Returns new judgements; the input is unchanged."""
+    adjusted = {}
+    for part in ("must_have", "nice_to_have"):
+        adjusted[part] = []
+        for item in judgements[part]:
+            kind = evidence_type(item["quotes"], resume_text)
+            new = {**item, "ai_verdict": item["verdict"], "evidence": kind}
+            if item["verdict"] == "met" and kind != "demonstrated":
+                new["verdict"] = "partly"
+            adjusted[part].append(new)
+    return adjusted
+
+
+def must_haves_met(judgements):
+    """How many must-haves are fully met, out of how many. Shown like an ATS knockout question,
+    but nobody is removed because of it."""
+    items = judgements["must_have"]
+    return {"met": sum(i["verdict"] == "met" for i in items), "of": len(items),
+            "all": all(i["verdict"] == "met" for i in items)}
+
+
+# ---------- what a simple keyword ATS would have scored ----------
+
+def keyword_score(job, resume_text):
+    """A plain keyword match, the way a basic ATS filter works, for comparison only.
+    For each requirement: all its keywords found = met, some = partly, none = not met.
+    Matching ignores capitals and allows a plural ("report" finds "reports"), but needs the whole
+    word, as keyword filters do: "lookup" does NOT find "XLOOKUP" or "INDEX MATCH", and "HR" does not
+    find "three". Uses the same 70/30 formula, so the two scores can be compared directly."""
+    text = " ".join(resume_text.split())
+    judgements = {}
+    for part in ("must_have", "nice_to_have"):
+        judgements[part] = []
+        for requirement in job[part]:
+            keywords = job.get("guide", {}).get(requirement, {}).get("keywords") or [requirement]
+            hits = [k for k in keywords
+                    if re.search(rf"(?<![A-Za-z]){re.escape(k)}s?(?![A-Za-z])", text, re.IGNORECASE)]
+            verdict = "met" if len(hits) == len(keywords) else "partly" if hits else "not met"
+            judgements[part].append({"requirement": requirement, "verdict": verdict, "keywords_found": hits,
+                                     "keywords": keywords})
+    return {"score": score(judgements), "judgements": judgements}
+
+
+# ---------- impact ratio, the measure used in NYC bias audits ----------
+
+def impact_ratios(groups):
+    """groups: {group name: [scores]}, e.g. {"female": [94, 61.2], "male": [94, 53]}.
+
+    Like a NYC Local Law 144 audit for tools that give scores: the "scoring rate" of a group is the
+    share of its scores above the median of ALL scores; each group's impact ratio is its rate divided
+    by the highest group's rate. The EEOC's four-fifths rule treats a ratio under 0.8 as a warning
+    sign. With few resumes this is very rough, so a warning is always attached.
+    Returns {"median", "groups": {name: {"count", "average", "rate", "ratio"}}, "warning"}."""
+    every = [s for scores in groups.values() for s in scores]
+    middle = median(every)
+    result = {}
+    for name, scores in groups.items():
+        rate = sum(s > middle for s in scores) / len(scores)
+        result[name] = {"count": len(scores), "average": round(sum(scores) / len(scores), 1), "rate": round(rate, 2)}
+    best = max(g["rate"] for g in result.values())
+    for g in result.values():
+        g["ratio"] = round(g["rate"] / best, 2) if best else None
+    warning = (f"Based on only {len(every)} scores. Real bias audits use hundreds or thousands of "
+               "applicants; treat this as a demonstration of the method, not a finding.")
+    return {"median": middle, "groups": result, "warning": warning}

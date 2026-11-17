@@ -1,8 +1,8 @@
 """Runs the whole loop on every sample resume with the real AI and saves the ranked shortlist.
 
 Run with:  .venv/bin/python run_all.py
-About 7 AI calls per resume (more if one is flagged), so a full run of 8 takes 10-15 minutes and
-about half of Groq's free daily allowance.
+About 9 AI calls per resume (more if one is flagged), so a full run of 9 takes about 20 minutes and
+most of Groq's free daily allowance (about 190,000 of 200,000 tokens). Run it on a fresh day.
 
 Saves:
   audit_logs/run_....json   the full audit file (kept on your computer, not in git)
@@ -58,8 +58,10 @@ def main():
     calls = [u for s in audit.record["steps"] if s["step"] == "score" for u in s["usage"]]
     totals = {"ai_calls": len(calls), "tokens": sum(c["prompt_tokens"] + c["reply_tokens"] for c in calls),
               "seconds": round(sum(c["seconds"] for c in calls))}
+    impact = loop.impact_report(ranked)
+    audit.log("impact_report", **impact)
     demo = {"simulated": False, "created": datetime.now().isoformat(timespec="seconds"),
-            "settings": loop.settings(), "job": job, "totals": totals, "shortlist": ranked}
+            "settings": loop.settings(), "job": job, "totals": totals, "shortlist": ranked, "impact": impact}
     (HERE / "data" / "demo_run.json").write_text(json.dumps(demo, indent=2, ensure_ascii=False), encoding="utf-8")
     (HERE / "data" / "demo_audit.json").write_text(json.dumps(audit.record, indent=2, ensure_ascii=False), encoding="utf-8")
 

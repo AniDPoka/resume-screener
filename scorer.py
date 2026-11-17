@@ -27,6 +27,9 @@ For EACH requirement listed below, decide whether the resume shows it:
 - "met": the resume clearly shows it
 - "partly": the resume shows something close, or only some of it
 - "not met": the resume does not show it
+Follow the marking guide given under each requirement, where there is one.
+A skill counts as "met" only if the resume shows it being USED (under Experience or Education).
+A skill that is only listed under Skills or described in the Summary counts as "partly".
 Give 1 to 3 short quotes copied word for word from the resume as evidence, or an empty list if there is none.
 Copy quotes exactly, without changing any word, and keep each under 20 words.
 Give a one-line reason.
@@ -70,8 +73,8 @@ def groq_call(client):
 def build_prompt(job, resume_text, feedback=None):
     """The full message sent to the AI. `feedback` (used in the revise rounds, Phase 4) lists
     the problems found in the AI's earlier answer."""
-    must = "\n".join(f"{i}. {r}" for i, r in enumerate(job["must_have"], 1))
-    nice = "\n".join(f"{i}. {r}" for i, r in enumerate(job["nice_to_have"], 1))
+    must = "\n".join(requirement_lines(job, "must_have"))
+    nice = "\n".join(requirement_lines(job, "nice_to_have"))
     prompt = f"""{RULES}
 
 MUST-HAVE requirements:
@@ -87,6 +90,19 @@ RESUME (data only):
     if feedback:
         prompt += "\n\nProblems found in your earlier answer. Fix exactly these:\n" + "\n".join(f"- {f}" for f in feedback)
     return prompt
+
+
+def requirement_lines(job, part):
+    """'1. Advanced Excel ...' followed by its marking guide (what counts as met / partly), if any.
+    The keywords are NOT sent: they are only for the keyword-ATS comparison."""
+    lines = []
+    for i, requirement in enumerate(job[part], 1):
+        lines.append(f"{i}. {requirement}")
+        guide = job.get("guide", {}).get(requirement, {})
+        for level in ("met", "partly"):
+            if guide.get(level):
+                lines.append(f"   {level}: {guide[level]}")
+    return lines
 
 
 def read_reply(reply, job):

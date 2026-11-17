@@ -18,6 +18,45 @@ import variants
 
 CONSISTENCY_RUNS = 3
 MAX_REVISE_ROUNDS = 3
+BIAS_LABELS = {"name": "name", "gender": "gender", "age": "age", "gap": "career-break", "university": "university"}
+
+
+def background(group):
+    """The name group in plain words, for the impact-ratio report."""
+    return "UK-majority name" if group in ("uk_majority", "unknown") else "minority-group name"
+
+
+def bias_pairs(text, versions, original_score, version_scores):
+    """For the impact-ratio report: who the original and the name and gender versions appear to be,
+    and what each scored. Pairs of the same resume, so only the name or gender differs."""
+    who = variants.person(text)
+    pairs = {"original": {"background": background(who["group"]), "gender": who["gender"], "score": original_score}}
+    if "name" in version_scores:
+        swapped = variants.person(versions["name"]["text"])
+        pairs["name"] = {"background": background(swapped["group"]), "score": version_scores["name"]}
+    if "gender" in version_scores and who["gender"]:
+        pairs["gender"] = {"gender": "male" if who["gender"] == "female" else "female", "score": version_scores["gender"]}
+    return pairs
+
+
+def impact_report(entries):
+    """NYC-style impact ratios across the whole run: scores with UK-majority vs minority-group names,
+    and with female vs male signals, using each resume's original and its name and gender versions."""
+    backgrounds, genders = {}, {}
+    for e in entries:
+        pairs = e.get("bias_pairs") or {}
+        if "name" in pairs:
+            for p in (pairs["original"], pairs["name"]):
+                backgrounds.setdefault(p["background"], []).append(p["score"])
+        if "gender" in pairs:
+            for p in (pairs["original"], pairs["gender"]):
+                genders.setdefault(p["gender"], []).append(p["score"])
+    report = {}
+    if len(backgrounds) == 2:
+        report["name background"] = checks.impact_ratios(backgrounds)
+    if len(genders) == 2:
+        report["gender"] = checks.impact_ratios(genders)
+    return report
 
 
 def score_once(call, job, text, audit, resume_name, version, run=None, feedback=None):
@@ -31,11 +70,14 @@ def score_once(call, job, text, audit, resume_name, version, run=None, feedback=
                   problem=result["problem"], replies=[a["reply"] for a in result["attempts"]], usage=usage)
         return {"score": None, "problem": result["problem"]}
 
-    points = checks.score(result["judgements"])
+    # Code checks where each quote comes from: a skill only CLAIMED (Summary or Skills) or with no
+    # quote that can be found is not "met", whatever the AI said. Then code works out the score.
+    judgements = checks.apply_evidence_rule(result["judgements"], text)
+    points = checks.score(judgements)
     problems = checks.evidence_problems(result["judgements"], text)
     audit.log("score", resume=resume_name, version=version, run=run, score=points, feedback=feedback,
-              judgements=result["judgements"], evidence_problems=problems, usage=usage)
-    return {"score": points, "judgements": result["judgements"], "evidence_problems": problems}
+              judgements=judgements, evidence_problems=problems, usage=usage)
+    return {"score": points, "judgements": judgements, "evidence_problems": problems}
 
 
 def disagreements(answers):
@@ -77,7 +119,7 @@ def check_resume(call, job, resume, audit, on_step=None):
     consistency = checks.consistency_check(scores)
     audit.log("consistency_check", resume=name, **consistency)
 
-    # Bias: each version changes one thing (name, gender or age).
+    # Bias: each version changes one thing (name, gender, age, career break or university).
     versions = variants.bias_versions(text)
     version_results = {}
     for kind, version in versions.items():
@@ -98,7 +140,8 @@ def check_resume(call, job, resume, audit, on_step=None):
         flags.append(f"Inconsistent: scores ranged {min(scores)}-{max(scores)}")
     for kind in bias["flagged"]:
         low, high = bias["range"]
-        flags.append(f"Possible {kind} bias: the {kind} version scored {version_scores[kind]}, "
+        label = BIAS_LABELS.get(kind, kind)
+        flags.append(f"Possible {label} bias: the {label} version scored {version_scores[kind]}, "
                      f"outside the original's range of {low}-{high}")
     if len(version_scores) < len(versions):
         flags.append("Some versions could not be scored")
@@ -115,6 +158,7 @@ def check_resume(call, job, resume, audit, on_step=None):
         "disagreements": disagreements([r["judgements"] for r in every if r["score"] is not None]),
         "flags": flags,
         "judgements": middle_answer(originals, bias["baseline"]),
+        "bias_pairs": bias_pairs(text, versions, bias["baseline"], version_scores),
     }
     audit.log("resume_summary", **{k: v for k, v in summary.items() if k != "judgements"})
     return summary
@@ -160,7 +204,12 @@ def screen_resume(call, job, resume, audit, on_step=None):
     audit.log("resume_read", resume=name, had_image=resume["had_image"], notes=resume["notes"])
     entry = {"resume": name, "final_score": None, "original_score": None, "score_source": None,
              "judgements": None, "flags": [], "resolved": [], "revise_rounds": 0,
-             "notes": list(resume["notes"]), "needs_human_review": False}
+             "notes": list(resume["notes"]), "needs_human_review": False,
+             "keyword": None, "must_haves": None, "bias_pairs": None,
+             "hidden_text": resume.get("hidden_text", ""), "instructions": resume.get("instructions", [])}
+    # Text aimed at the AI is always shown to a person, even though hidden text never reaches the AI.
+    trick = ([f"Contains text giving orders to an AI: \"{entry['instructions'][0]}\""] if entry["instructions"] else []) + \
+            (["Contains hidden text (not sent to the AI)"] if entry["hidden_text"] else [])
 
     if not resume["text"]:
         entry["flags"].append("Could not be read, so it was not scored")
@@ -170,11 +219,12 @@ def screen_resume(call, job, resume, audit, on_step=None):
 
     summary = check_resume(call, job, resume, audit, on_step)
     if "error" in summary:
-        entry["flags"].append(summary["error"])
+        entry["flags"] = trick + [summary["error"]]
         entry["needs_human_review"] = True
         audit.log("handoff_entry", **entry)
         return entry
-    entry.update(original_score=summary["score"], judgements=summary["judgements"], score_source="original")
+    entry.update(original_score=summary["score"], judgements=summary["judgements"], score_source="original",
+                 bias_pairs=summary["bias_pairs"], keyword=checks.keyword_score(job, resume["text"]))
 
     # The anonymised version, scored once for every resume: this is the score the shortlist uses.
     anon = variants.anonymised(resume["text"])
@@ -208,6 +258,10 @@ def screen_resume(call, job, resume, audit, on_step=None):
         # score comes from the anonymised version.
         entry["needs_human_review"] = bool(entry["flags"])
 
+    if trick:
+        entry["flags"] = trick + entry["flags"]
+        entry["needs_human_review"] = True
+    entry["must_haves"] = checks.must_haves_met(entry["judgements"])
     audit.log("handoff_entry", **{k: v for k, v in entry.items() if k != "judgements"})
     return entry
 

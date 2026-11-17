@@ -11,7 +11,7 @@ import json
 def reply(must, nice, quote="Wrote SQL queries"):
     """A reply with the given verdicts, e.g. reply(["met"] * 4, ["not met"] * 5).
     Every "met" or "partly" verdict gets the given quote as evidence."""
-    item = lambda v: {"requirement": "ignored", "verdict": v, "quotes": [quote] if v != "not met" else [], "reason": "r"}
+    item = lambda v: {"requirement": "ignored", "verdict": v, "quotes": [quote] if v != "not met" else [], "reason": "Simulated reason."}
     return json.dumps({"must_have": [item(v) for v in must], "nice_to_have": [item(v) for v in nice]})
 
 

@@ -28,14 +28,14 @@ MADE_UP_QUOTE = "Built advanced Excel models for the HR team"     # not in Liam'
 usual = reply(["met", "not met", "partly", "not met"], ["not met"] * 5, quote=REAL_QUOTE)
 # Call 2: the fake AI claims Advanced Excel with a quote that is not in the resume.
 invented = reply(["met", "met", "partly", "not met"], ["not met"] * 5, quote=MADE_UP_QUOTE)
-# Call 9 (revise round 1): it changes its mind on "reports or dashboards", from partly to met.
+# Call 11 (revise round 1): it changes its mind on "reports or dashboards", from partly to met.
 wobble = reply(["met", "not met", "met", "not met"], ["not met"] * 5, quote=REAL_QUOTE)
 
 
 def scripted(prompt, number):
-    """Which answer the fake AI gives on each call (calls 1-3 original, 4-6 bias versions,
-    7 anonymised, 8-10 revise round 1, 11-13 revise round 2)."""
-    return {2: invented, 9: wobble}.get(number, usual)
+    """Which answer the fake AI gives on each call (calls 1-3 original, 4-8 bias versions,
+    9 anonymised, 10-12 revise round 1, 13-15 revise round 2)."""
+    return {2: invented, 11: wobble}.get(number, usual)
 
 
 def main():

@@ -6,13 +6,40 @@ You will turn HR data into clear reports that help managers make fair decisions 
 
 Must-have:
 - At least 2 years of experience working with HR or people data
+    met: 2 or more years in roles where handling HR or people data was part of the job
+    partly: less than 2 years, or people data was only a small side task
+    keywords: HR, data
 - Advanced Excel (pivot tables, lookups)
+    met: uses both pivot tables and lookup functions (VLOOKUP, XLOOKUP or INDEX MATCH)
+    partly: uses only one of them, or mentions Excel without saying how
+    keywords: pivot table, lookup
 - Building regular reports or dashboards for managers
+    met: has built reports or dashboards that managers used on a regular schedule
+    partly: some reporting work, but not regular or not clearly for managers
+    keywords: report, dashboard
 - Working knowledge of data protection (GDPR) when handling employee data
+    met: has applied GDPR or data protection rules to employee data
+    partly: mentions GDPR without saying how it was applied
+    keywords: GDPR
 
 Nice-to-have:
 - SQL
+    met: has written SQL queries
+    partly: mentions SQL without saying how it was used
+    keywords: SQL
 - Power BI or Tableau
+    met: has built something with Power BI or Tableau
+    partly: mentions either tool without saying what was built
+    keywords: Power BI, Tableau
 - Python
+    met: has used Python for a task
+    partly: mentions Python without saying how it was used
+    keywords: Python
 - Experience with an HR system such as Workday or SAP SuccessFactors
+    met: has used an HR system as part of the job
+    partly: mentions an HR system without saying how it was used
+    keywords: Workday, SuccessFactors, HR system
 - CIPD qualification
+    met: holds a CIPD qualification or membership
+    partly: is studying for a CIPD qualification
+    keywords: CIPD
