@@ -1,0 +1,776 @@
+{
+  "id": "rsInterviewFlow1",
+  "name": "Interview scheduling (resume screener)",
+  "active": false,
+  "nodes": [
+    {
+      "id": "659b68f1-2117-5731-be87-9829b7f1ca05",
+      "name": "Note: invites",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -140
+      ],
+      "parameters": {
+        "content": "## 1. Invites\nThe recruiter approves candidates in the screener app and clicks **Send invites**. The request is signed, so only the app can start this. Each candidate is held 3 free times and gets an email (test mode: saved to the outbox, not sent).",
+        "width": 1180,
+        "height": 420
+      }
+    },
+    {
+      "id": "79510e88-8aec-552c-a13d-fbfc8795340f",
+      "name": "Recruiter sends invites",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        100
+      ],
+      "webhookId": "9fb65094-aecb-5d1d-892f-23ec098dfd3c",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "interview/invite",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "fa759799-11e7-53cd-96b7-fdf70407df13",
+      "name": "Check it came from the screener",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        100
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== Shared settings and helpers. build_workflow.py puts this at the top of every Code node. =====\n// To change a setting: edit it here, run  .venv/bin/python n8n/build_workflow.py  and import again.\n\nconst SETTINGS = {\n  testMode: true,             // true: emails are saved to the outbox page, never sent; calendar is simulated\n  timezone: 'Europe/London',  // interview times are UK working hours\n  workdayStartHour: 9,        // first slot starts 09:00\n  workdayEndHour: 17,         // last slot must end by 17:00\n  slotMinutes: 45,            // length of an interview\n  slotsPerInvite: 3,          // how many times each candidate is offered\n  workingDaysAhead: 5,        // offer times from the next 5 working days (Monday to Friday)\n  reminderHoursBefore: 24,    // reminder email this long before the interview\n  followUpAfterHours: 72,     // one polite reminder if no time is picked within 3 days\n  alertRecruiterAfterHours: 120, // after 5 days with no answer, tell the recruiter (never reject automatically)\n  requestMaxAgeMinutes: 10,   // an invite request older than this is refused\n  baseUrl: 'http://localhost:5678/webhook/interview',\n  recruiterEmail: 'recruiter@example.com',\n  interviewerName: 'the People Analytics team',\n};\n\nconst crypto = require('crypto');\nconst SECRET = $env.INTERVIEW_SECRET;  // shared with the screener app; set by start_n8n.sh, never written down here\n\n// A signature only the screener app and this workflow can make (HMAC-SHA256 with the shared secret).\nfunction sign(text) {\n  return crypto.createHmac('sha256', SECRET).update(text).digest('hex');\n}\n\n// Compares two signatures safely (in constant time, so nobody can guess one by timing the answers).\nfunction sameSignature(a, b) {\n  a = String(a || ''); b = String(b || '');\n  return a.length === b.length && a.length > 0 && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));\n}\n\n// Everything the workflow remembers between runs: invites, bookings (the simulated calendar),\n// the outbox (emails that would have been sent) and the audit log. n8n keeps this with the workflow.\nfunction store() {\n  const s = $getWorkflowStaticData('global');\n  s.invites = s.invites || {};       // invite id -> who, which times were offered, status\n  s.bookings = s.bookings || {};     // slot start time -> invite id (the simulated calendar)\n  s.outbox = s.outbox || [];         // every email, in order\n  s.log = s.log || [];               // every step, in order\n  s.seenRequests = s.seenRequests || {};  // request ids already used (each request works once)\n  return s;\n}\n\nfunction now() {\n  return DateTime.now().setZone(SETTINGS.timezone);\n}\n\nfunction isoTime(dt) {\n  return dt.toISO({ suppressMilliseconds: true });\n}\n\nfunction log(s, event, details) {\n  s.log.push({ time: isoTime(now()), event, ...details });\n}\n\n// Text from a resume or a request is always escaped before it goes into a web page.\nfunction esc(text) {\n  return String(text ?? '').replace(/[&<>\"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]));\n}\n\nfunction slotLabel(iso) {\n  return DateTime.fromISO(iso, { zone: SETTINGS.timezone }).toFormat(\"cccc d LLLL 'at' HH:mm\");\n}\n\n// The next free interview times: Monday to Friday, within working hours, starting tomorrow.\n// A time is not free if it is booked, or offered to someone who has not answered yet.\nfunction freeSlots(s, count, from) {\n  const taken = new Set(Object.keys(s.bookings));\n  for (const invite of Object.values(s.invites)) {\n    if (invite.status === 'invited') invite.offered.forEach(slot => taken.add(slot));\n  }\n  const slots = [];\n  let day = from.plus({ days: 1 }).startOf('day');\n  let workingDays = 0;\n  while (slots.length < count && workingDays < SETTINGS.workingDaysAhead) {\n    if (day.weekday <= 5) {  // 1 = Monday ... 5 = Friday\n      workingDays++;\n      for (let hour = SETTINGS.workdayStartHour;\n           hour * 60 + SETTINGS.slotMinutes <= SETTINGS.workdayEndHour * 60 && slots.length < count; hour++) {\n        const slot = isoTime(day.set({ hour }));\n        if (!taken.has(slot)) slots.push(slot);\n      }\n    }\n    day = day.plus({ days: 1 });\n  }\n  return slots;\n}\n\n// The link behind each time button. The signature means a link cannot be made up or changed.\nfunction bookingLink(inviteId, slot) {\n  const sig = sign(`book|${inviteId}|${slot}`);\n  return `${SETTINGS.baseUrl}/book?invite=${encodeURIComponent(inviteId)}&slot=${encodeURIComponent(slot)}&sig=${sig}`;\n}\n\n// \"Sends\" an email. In test mode it is only saved to the outbox page and the log.\n// To send for real, connect a Gmail node after the node that calls this (see n8n/README.md).\nfunction deliver(s, email) {\n  const message = { id: `email-${s.outbox.length + 1}`, created: isoTime(now()), sent: !SETTINGS.testMode, ...email };\n  s.outbox.push(message);\n  log(s, SETTINGS.testMode ? 'email_saved_to_outbox' : 'email_sent', { to: email.to, subject: email.subject, kind: email.kind });\n  return message;\n}\n\n// The time buttons in an invite or follow-up email, as plain text and as a small web page.\nfunction slotButtons(invite) {\n  return invite.offered.map(slot => ({ label: slotLabel(slot), link: bookingLink(invite.id, slot) }));\n}\n\nfunction page(title, body) {\n  return `<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>${esc(title)}</title><style>\nbody{font-family:-apple-system,Segoe UI,Arial,sans-serif;background:#f5f9ff;color:#14315c;max-width:760px;margin:32px auto;padding:0 16px;line-height:1.5}\nh1{font-size:1.5rem} .card{background:#fff;border:1px solid #d6e2f5;border-radius:12px;padding:16px 20px;margin:14px 0}\na.button{display:inline-block;background:#1f5fd6;color:#fff;text-decoration:none;padding:8px 14px;border-radius:8px;margin:4px 6px 4px 0}\n.muted{color:#5b7299;font-size:.9rem} .tag{background:#e6efff;border-radius:6px;padding:2px 8px;font-size:.8rem}\ntable{border-collapse:collapse;width:100%} td,th{border-bottom:1px solid #d6e2f5;padding:6px;text-align:left}\n</style></head><body>${body}</body></html>`;\n}\n// ===== end of shared helpers =====\n\n// Step 1 of the invite flow: is this request genuine?\n// It must be signed with the shared secret, be less than 10 minutes old, and not have been used before.\nconst s = store();\nconst incoming = $input.first().json.body || {};\nconst fail = reason => {\n  log(s, 'invite_request_refused', { reason });\n  return [{ json: { ok: false, reason } }];\n};\n\nif (!SECRET) return fail('The workflow has no secret set (start n8n with n8n/start_n8n.sh).');\nif (typeof incoming.body !== 'string' || !sameSignature(sign(incoming.body), incoming.signature)) {\n  return fail('The signature does not match, so this did not come from the screener app.');\n}\nconst request = JSON.parse(incoming.body);\nconst age = now().diff(DateTime.fromISO(request.sent_at), 'minutes').minutes;\nif (!(age >= -2 && age <= SETTINGS.requestMaxAgeMinutes)) return fail('The request is too old (or its time is wrong).');\nif (s.seenRequests[request.request_id]) return fail('This request was already used.');\ns.seenRequests[request.request_id] = isoTime(now());\nif (!Array.isArray(request.candidates) || request.candidates.length === 0) return fail('No candidates in the request.');\n\nlog(s, 'invite_request_accepted', { request_id: request.request_id, role: request.role, candidates: request.candidates.length });\nreturn [{ json: { ok: true, request } }];\n"
+      }
+    },
+    {
+      "id": "85280276-8491-53a1-a2d6-1498fc7d5adc",
+      "name": "Genuine request?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "85280276-8491-53a1-a2d6-1498fc7d5adc",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "4793cc48-1e05-52d6-8933-bcfae92f1628",
+      "name": "Hold 3 free times per candidate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== Shared settings and helpers. build_workflow.py puts this at the top of every Code node. =====\n// To change a setting: edit it here, run  .venv/bin/python n8n/build_workflow.py  and import again.\n\nconst SETTINGS = {\n  testMode: true,             // true: emails are saved to the outbox page, never sent; calendar is simulated\n  timezone: 'Europe/London',  // interview times are UK working hours\n  workdayStartHour: 9,        // first slot starts 09:00\n  workdayEndHour: 17,         // last slot must end by 17:00\n  slotMinutes: 45,            // length of an interview\n  slotsPerInvite: 3,          // how many times each candidate is offered\n  workingDaysAhead: 5,        // offer times from the next 5 working days (Monday to Friday)\n  reminderHoursBefore: 24,    // reminder email this long before the interview\n  followUpAfterHours: 72,     // one polite reminder if no time is picked within 3 days\n  alertRecruiterAfterHours: 120, // after 5 days with no answer, tell the recruiter (never reject automatically)\n  requestMaxAgeMinutes: 10,   // an invite request older than this is refused\n  baseUrl: 'http://localhost:5678/webhook/interview',\n  recruiterEmail: 'recruiter@example.com',\n  interviewerName: 'the People Analytics team',\n};\n\nconst crypto = require('crypto');\nconst SECRET = $env.INTERVIEW_SECRET;  // shared with the screener app; set by start_n8n.sh, never written down here\n\n// A signature only the screener app and this workflow can make (HMAC-SHA256 with the shared secret).\nfunction sign(text) {\n  return crypto.createHmac('sha256', SECRET).update(text).digest('hex');\n}\n\n// Compares two signatures safely (in constant time, so nobody can guess one by timing the answers).\nfunction sameSignature(a, b) {\n  a = String(a || ''); b = String(b || '');\n  return a.length === b.length && a.length > 0 && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));\n}\n\n// Everything the workflow remembers between runs: invites, bookings (the simulated calendar),\n// the outbox (emails that would have been sent) and the audit log. n8n keeps this with the workflow.\nfunction store() {\n  const s = $getWorkflowStaticData('global');\n  s.invites = s.invites || {};       // invite id -> who, which times were offered, status\n  s.bookings = s.bookings || {};     // slot start time -> invite id (the simulated calendar)\n  s.outbox = s.outbox || [];         // every email, in order\n  s.log = s.log || [];               // every step, in order\n  s.seenRequests = s.seenRequests || {};  // request ids already used (each request works once)\n  return s;\n}\n\nfunction now() {\n  return DateTime.now().setZone(SETTINGS.timezone);\n}\n\nfunction isoTime(dt) {\n  return dt.toISO({ suppressMilliseconds: true });\n}\n\nfunction log(s, event, details) {\n  s.log.push({ time: isoTime(now()), event, ...details });\n}\n\n// Text from a resume or a request is always escaped before it goes into a web page.\nfunction esc(text) {\n  return String(text ?? '').replace(/[&<>\"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]));\n}\n\nfunction slotLabel(iso) {\n  return DateTime.fromISO(iso, { zone: SETTINGS.timezone }).toFormat(\"cccc d LLLL 'at' HH:mm\");\n}\n\n// The next free interview times: Monday to Friday, within working hours, starting tomorrow.\n// A time is not free if it is booked, or offered to someone who has not answered yet.\nfunction freeSlots(s, count, from) {\n  const taken = new Set(Object.keys(s.bookings));\n  for (const invite of Object.values(s.invites)) {\n    if (invite.status === 'invited') invite.offered.forEach(slot => taken.add(slot));\n  }\n  const slots = [];\n  let day = from.plus({ days: 1 }).startOf('day');\n  let workingDays = 0;\n  while (slots.length < count && workingDays < SETTINGS.workingDaysAhead) {\n    if (day.weekday <= 5) {  // 1 = Monday ... 5 = Friday\n      workingDays++;\n      for (let hour = SETTINGS.workdayStartHour;\n           hour * 60 + SETTINGS.slotMinutes <= SETTINGS.workdayEndHour * 60 && slots.length < count; hour++) {\n        const slot = isoTime(day.set({ hour }));\n        if (!taken.has(slot)) slots.push(slot);\n      }\n    }\n    day = day.plus({ days: 1 });\n  }\n  return slots;\n}\n\n// The link behind each time button. The signature means a link cannot be made up or changed.\nfunction bookingLink(inviteId, slot) {\n  const sig = sign(`book|${inviteId}|${slot}`);\n  return `${SETTINGS.baseUrl}/book?invite=${encodeURIComponent(inviteId)}&slot=${encodeURIComponent(slot)}&sig=${sig}`;\n}\n\n// \"Sends\" an email. In test mode it is only saved to the outbox page and the log.\n// To send for real, connect a Gmail node after the node that calls this (see n8n/README.md).\nfunction deliver(s, email) {\n  const message = { id: `email-${s.outbox.length + 1}`, created: isoTime(now()), sent: !SETTINGS.testMode, ...email };\n  s.outbox.push(message);\n  log(s, SETTINGS.testMode ? 'email_saved_to_outbox' : 'email_sent', { to: email.to, subject: email.subject, kind: email.kind });\n  return message;\n}\n\n// The time buttons in an invite or follow-up email, as plain text and as a small web page.\nfunction slotButtons(invite) {\n  return invite.offered.map(slot => ({ label: slotLabel(slot), link: bookingLink(invite.id, slot) }));\n}\n\nfunction page(title, body) {\n  return `<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>${esc(title)}</title><style>\nbody{font-family:-apple-system,Segoe UI,Arial,sans-serif;background:#f5f9ff;color:#14315c;max-width:760px;margin:32px auto;padding:0 16px;line-height:1.5}\nh1{font-size:1.5rem} .card{background:#fff;border:1px solid #d6e2f5;border-radius:12px;padding:16px 20px;margin:14px 0}\na.button{display:inline-block;background:#1f5fd6;color:#fff;text-decoration:none;padding:8px 14px;border-radius:8px;margin:4px 6px 4px 0}\n.muted{color:#5b7299;font-size:.9rem} .tag{background:#e6efff;border-radius:6px;padding:2px 8px;font-size:.8rem}\ntable{border-collapse:collapse;width:100%} td,th{border-bottom:1px solid #d6e2f5;padding:6px;text-align:left}\n</style></head><body>${body}</body></html>`;\n}\n// ===== end of shared helpers =====\n\n// Step 2: for each approved candidate, hold 3 free interview times.\n// Each candidate gets different times, so two people are never offered the same slot.\n// Someone already invited or booked is skipped, so nobody gets two invites.\nconst s = store();\nconst { request } = $input.first().json;\nconst results = [];\nfor (const c of request.candidates) {\n  const already = Object.values(s.invites).find(i => i.email === c.email && i.status !== 'closed');\n  if (already) {\n    log(s, 'candidate_skipped', { name: c.name, reason: `already ${already.status}` });\n    results.push({ json: { name: c.name, skipped: `already ${already.status}` } });\n    continue;\n  }\n  const offered = freeSlots(s, SETTINGS.slotsPerInvite, now());\n  if (offered.length < SETTINGS.slotsPerInvite) {\n    log(s, 'candidate_skipped', { name: c.name, reason: 'not enough free times in the next working days' });\n    results.push({ json: { name: c.name, skipped: 'not enough free times' } });\n    continue;\n  }\n  const id = `inv-${request.request_id.slice(0, 8)}-${c.id}`;\n  s.invites[id] = {\n    id, candidate_id: c.id, name: c.name, email: c.email, role: request.role,\n    offered, status: 'invited', invited_at: isoTime(now()),\n    followed_up: false, recruiter_alerted: false,\n  };\n  log(s, 'slots_offered', { invite: id, name: c.name, offered });\n  results.push({ json: { invite_id: id, name: c.name } });\n}\nreturn results;\n"
+      }
+    },
+    {
+      "id": "9e24d39a-f0a3-56fb-864e-0836239cbb03",
+      "name": "Write and save invite emails",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== Shared settings and helpers. build_workflow.py puts this at the top of every Code node. =====\n// To change a setting: edit it here, run  .venv/bin/python n8n/build_workflow.py  and import again.\n\nconst SETTINGS = {\n  testMode: true,             // true: emails are saved to the outbox page, never sent; calendar is simulated\n  timezone: 'Europe/London',  // interview times are UK working hours\n  workdayStartHour: 9,        // first slot starts 09:00\n  workdayEndHour: 17,         // last slot must end by 17:00\n  slotMinutes: 45,            // length of an interview\n  slotsPerInvite: 3,          // how many times each candidate is offered\n  workingDaysAhead: 5,        // offer times from the next 5 working days (Monday to Friday)\n  reminderHoursBefore: 24,    // reminder email this long before the interview\n  followUpAfterHours: 72,     // one polite reminder if no time is picked within 3 days\n  alertRecruiterAfterHours: 120, // after 5 days with no answer, tell the recruiter (never reject automatically)\n  requestMaxAgeMinutes: 10,   // an invite request older than this is refused\n  baseUrl: 'http://localhost:5678/webhook/interview',\n  recruiterEmail: 'recruiter@example.com',\n  interviewerName: 'the People Analytics team',\n};\n\nconst crypto = require('crypto');\nconst SECRET = $env.INTERVIEW_SECRET;  // shared with the screener app; set by start_n8n.sh, never written down here\n\n// A signature only the screener app and this workflow can make (HMAC-SHA256 with the shared secret).\nfunction sign(text) {\n  return crypto.createHmac('sha256', SECRET).update(text).digest('hex');\n}\n\n// Compares two signatures safely (in constant time, so nobody can guess one by timing the answers).\nfunction sameSignature(a, b) {\n  a = String(a || ''); b = String(b || '');\n  return a.length === b.length && a.length > 0 && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));\n}\n\n// Everything the workflow remembers between runs: invites, bookings (the simulated calendar),\n// the outbox (emails that would have been sent) and the audit log. n8n keeps this with the workflow.\nfunction store() {\n  const s = $getWorkflowStaticData('global');\n  s.invites = s.invites || {};       // invite id -> who, which times were offered, status\n  s.bookings = s.bookings || {};     // slot start time -> invite id (the simulated calendar)\n  s.outbox = s.outbox || [];         // every email, in order\n  s.log = s.log || [];               // every step, in order\n  s.seenRequests = s.seenRequests || {};  // request ids already used (each request works once)\n  return s;\n}\n\nfunction now() {\n  return DateTime.now().setZone(SETTINGS.timezone);\n}\n\nfunction isoTime(dt) {\n  return dt.toISO({ suppressMilliseconds: true });\n}\n\nfunction log(s, event, details) {\n  s.log.push({ time: isoTime(now()), event, ...details });\n}\n\n// Text from a resume or a request is always escaped before it goes into a web page.\nfunction esc(text) {\n  return String(text ?? '').replace(/[&<>\"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]));\n}\n\nfunction slotLabel(iso) {\n  return DateTime.fromISO(iso, { zone: SETTINGS.timezone }).toFormat(\"cccc d LLLL 'at' HH:mm\");\n}\n\n// The next free interview times: Monday to Friday, within working hours, starting tomorrow.\n// A time is not free if it is booked, or offered to someone who has not answered yet.\nfunction freeSlots(s, count, from) {\n  const taken = new Set(Object.keys(s.bookings));\n  for (const invite of Object.values(s.invites)) {\n    if (invite.status === 'invited') invite.offered.forEach(slot => taken.add(slot));\n  }\n  const slots = [];\n  let day = from.plus({ days: 1 }).startOf('day');\n  let workingDays = 0;\n  while (slots.length < count && workingDays < SETTINGS.workingDaysAhead) {\n    if (day.weekday <= 5) {  // 1 = Monday ... 5 = Friday\n      workingDays++;\n      for (let hour = SETTINGS.workdayStartHour;\n           hour * 60 + SETTINGS.slotMinutes <= SETTINGS.workdayEndHour * 60 && slots.length < count; hour++) {\n        const slot = isoTime(day.set({ hour }));\n        if (!taken.has(slot)) slots.push(slot);\n      }\n    }\n    day = day.plus({ days: 1 });\n  }\n  return slots;\n}\n\n// The link behind each time button. The signature means a link cannot be made up or changed.\nfunction bookingLink(inviteId, slot) {\n  const sig = sign(`book|${inviteId}|${slot}`);\n  return `${SETTINGS.baseUrl}/book?invite=${encodeURIComponent(inviteId)}&slot=${encodeURIComponent(slot)}&sig=${sig}`;\n}\n\n// \"Sends\" an email. In test mode it is only saved to the outbox page and the log.\n// To send for real, connect a Gmail node after the node that calls this (see n8n/README.md).\nfunction deliver(s, email) {\n  const message = { id: `email-${s.outbox.length + 1}`, created: isoTime(now()), sent: !SETTINGS.testMode, ...email };\n  s.outbox.push(message);\n  log(s, SETTINGS.testMode ? 'email_saved_to_outbox' : 'email_sent', { to: email.to, subject: email.subject, kind: email.kind });\n  return message;\n}\n\n// The time buttons in an invite or follow-up email, as plain text and as a small web page.\nfunction slotButtons(invite) {\n  return invite.offered.map(slot => ({ label: slotLabel(slot), link: bookingLink(invite.id, slot) }));\n}\n\nfunction page(title, body) {\n  return `<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>${esc(title)}</title><style>\nbody{font-family:-apple-system,Segoe UI,Arial,sans-serif;background:#f5f9ff;color:#14315c;max-width:760px;margin:32px auto;padding:0 16px;line-height:1.5}\nh1{font-size:1.5rem} .card{background:#fff;border:1px solid #d6e2f5;border-radius:12px;padding:16px 20px;margin:14px 0}\na.button{display:inline-block;background:#1f5fd6;color:#fff;text-decoration:none;padding:8px 14px;border-radius:8px;margin:4px 6px 4px 0}\n.muted{color:#5b7299;font-size:.9rem} .tag{background:#e6efff;border-radius:6px;padding:2px 8px;font-size:.8rem}\ntable{border-collapse:collapse;width:100%} td,th{border-bottom:1px solid #d6e2f5;padding:6px;text-align:left}\n</style></head><body>${body}</body></html>`;\n}\n// ===== end of shared helpers =====\n\n// Step 3: write each invite email with its 3 time buttons, and \"send\" it\n// (in test mode: save it to the outbox page). Then answer the screener app.\nconst s = store();\nconst invited = [], skipped = [];\nfor (const item of $input.all()) {\n  if (item.json.skipped) { skipped.push({ name: item.json.name, reason: item.json.skipped }); continue; }\n  const invite = s.invites[item.json.invite_id];\n  const buttons = slotButtons(invite);\n  deliver(s, {\n    kind: 'invite', to: invite.email, invite: invite.id,\n    subject: `Interview invitation: ${invite.role}`,\n    text: `Dear ${invite.name},\\n\\nThank you for applying for the ${invite.role} role. We would like to invite you ` +\n          `to a ${SETTINGS.slotMinutes}-minute video interview with ${SETTINGS.interviewerName}.\\n\\n` +\n          `Please choose one of these times:\\n` + buttons.map(b => `- ${b.label}`).join('\\n') +\n          `\\n\\nIf none of these suit you, just reply and we will find another time.\\n\\nKind regards,\\nRecruitment team`,\n    buttons,\n  });\n  invited.push(invite.name);\n}\nreturn [{ json: { ok: true, invited, skipped, outbox: `${SETTINGS.baseUrl}/outbox`, test_mode: SETTINGS.testMode } }];\n"
+      }
+    },
+    {
+      "id": "a2d42f5d-8fd4-5205-bfb1-18ba70f2c8e2",
+      "name": "Answer the screener",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "e9860831-b8ed-5de1-b29f-7debf60fcced",
+      "name": "Refuse the request",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        660,
+        200
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 401
+        }
+      }
+    },
+    {
+      "id": "dcbd3920-746c-518d-a70a-d67358e0bb70",
+      "name": "Note: booking",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        320
+      ],
+      "parameters": {
+        "content": "## 2. Booking\nThe candidate clicks a time in the email. The link is signed, so it cannot be made up or changed. The time is booked (test mode: a simulated calendar), a confirmation is written, and if someone took that time a moment earlier, 3 new times are offered.",
+        "width": 1180,
+        "height": 400
+      }
+    },
+    {
+      "id": "211c80a5-d3bf-5996-9b5c-ad1dd109bf2d",
+      "name": "Candidate picks a time",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        540
+      ],
+      "webhookId": "5d40840e-c084-5040-84a2-3773bbbcc877",
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "interview/book",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "d4b20dbb-9b9e-59a9-88d8-3462751e5f58",
+      "name": "Check the link is genuine",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        540
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== Shared settings and helpers. build_workflow.py puts this at the top of every Code node. =====\n// To change a setting: edit it here, run  .venv/bin/python n8n/build_workflow.py  and import again.\n\nconst SETTINGS = {\n  testMode: true,             // true: emails are saved to the outbox page, never sent; calendar is simulated\n  timezone: 'Europe/London',  // interview times are UK working hours\n  workdayStartHour: 9,        // first slot starts 09:00\n  workdayEndHour: 17,         // last slot must end by 17:00\n  slotMinutes: 45,            // length of an interview\n  slotsPerInvite: 3,          // how many times each candidate is offered\n  workingDaysAhead: 5,        // offer times from the next 5 working days (Monday to Friday)\n  reminderHoursBefore: 24,    // reminder email this long before the interview\n  followUpAfterHours: 72,     // one polite reminder if no time is picked within 3 days\n  alertRecruiterAfterHours: 120, // after 5 days with no answer, tell the recruiter (never reject automatically)\n  requestMaxAgeMinutes: 10,   // an invite request older than this is refused\n  baseUrl: 'http://localhost:5678/webhook/interview',\n  recruiterEmail: 'recruiter@example.com',\n  interviewerName: 'the People Analytics team',\n};\n\nconst crypto = require('crypto');\nconst SECRET = $env.INTERVIEW_SECRET;  // shared with the screener app; set by start_n8n.sh, never written down here\n\n// A signature only the screener app and this workflow can make (HMAC-SHA256 with the shared secret).\nfunction sign(text) {\n  return crypto.createHmac('sha256', SECRET).update(text).digest('hex');\n}\n\n// Compares two signatures safely (in constant time, so nobody can guess one by timing the answers).\nfunction sameSignature(a, b) {\n  a = String(a || ''); b = String(b || '');\n  return a.length === b.length && a.length > 0 && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));\n}\n\n// Everything the workflow remembers between runs: invites, bookings (the simulated calendar),\n// the outbox (emails that would have been sent) and the audit log. n8n keeps this with the workflow.\nfunction store() {\n  const s = $getWorkflowStaticData('global');\n  s.invites = s.invites || {};       // invite id -> who, which times were offered, status\n  s.bookings = s.bookings || {};     // slot start time -> invite id (the simulated calendar)\n  s.outbox = s.outbox || [];         // every email, in order\n  s.log = s.log || [];               // every step, in order\n  s.seenRequests = s.seenRequests || {};  // request ids already used (each request works once)\n  return s;\n}\n\nfunction now() {\n  return DateTime.now().setZone(SETTINGS.timezone);\n}\n\nfunction isoTime(dt) {\n  return dt.toISO({ suppressMilliseconds: true });\n}\n\nfunction log(s, event, details) {\n  s.log.push({ time: isoTime(now()), event, ...details });\n}\n\n// Text from a resume or a request is always escaped before it goes into a web page.\nfunction esc(text) {\n  return String(text ?? '').replace(/[&<>\"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]));\n}\n\nfunction slotLabel(iso) {\n  return DateTime.fromISO(iso, { zone: SETTINGS.timezone }).toFormat(\"cccc d LLLL 'at' HH:mm\");\n}\n\n// The next free interview times: Monday to Friday, within working hours, starting tomorrow.\n// A time is not free if it is booked, or offered to someone who has not answered yet.\nfunction freeSlots(s, count, from) {\n  const taken = new Set(Object.keys(s.bookings));\n  for (const invite of Object.values(s.invites)) {\n    if (invite.status === 'invited') invite.offered.forEach(slot => taken.add(slot));\n  }\n  const slots = [];\n  let day = from.plus({ days: 1 }).startOf('day');\n  let workingDays = 0;\n  while (slots.length < count && workingDays < SETTINGS.workingDaysAhead) {\n    if (day.weekday <= 5) {  // 1 = Monday ... 5 = Friday\n      workingDays++;\n      for (let hour = SETTINGS.workdayStartHour;\n           hour * 60 + SETTINGS.slotMinutes <= SETTINGS.workdayEndHour * 60 && slots.length < count; hour++) {\n        const slot = isoTime(day.set({ hour }));\n        if (!taken.has(slot)) slots.push(slot);\n      }\n    }\n    day = day.plus({ days: 1 });\n  }\n  return slots;\n}\n\n// The link behind each time button. The signature means a link cannot be made up or changed.\nfunction bookingLink(inviteId, slot) {\n  const sig = sign(`book|${inviteId}|${slot}`);\n  return `${SETTINGS.baseUrl}/book?invite=${encodeURIComponent(inviteId)}&slot=${encodeURIComponent(slot)}&sig=${sig}`;\n}\n\n// \"Sends\" an email. In test mode it is only saved to the outbox page and the log.\n// To send for real, connect a Gmail node after the node that calls this (see n8n/README.md).\nfunction deliver(s, email) {\n  const message = { id: `email-${s.outbox.length + 1}`, created: isoTime(now()), sent: !SETTINGS.testMode, ...email };\n  s.outbox.push(message);\n  log(s, SETTINGS.testMode ? 'email_saved_to_outbox' : 'email_sent', { to: email.to, subject: email.subject, kind: email.kind });\n  return message;\n}\n\n// The time buttons in an invite or follow-up email, as plain text and as a small web page.\nfunction slotButtons(invite) {\n  return invite.offered.map(slot => ({ label: slotLabel(slot), link: bookingLink(invite.id, slot) }));\n}\n\nfunction page(title, body) {\n  return `<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>${esc(title)}</title><style>\nbody{font-family:-apple-system,Segoe UI,Arial,sans-serif;background:#f5f9ff;color:#14315c;max-width:760px;margin:32px auto;padding:0 16px;line-height:1.5}\nh1{font-size:1.5rem} .card{background:#fff;border:1px solid #d6e2f5;border-radius:12px;padding:16px 20px;margin:14px 0}\na.button{display:inline-block;background:#1f5fd6;color:#fff;text-decoration:none;padding:8px 14px;border-radius:8px;margin:4px 6px 4px 0}\n.muted{color:#5b7299;font-size:.9rem} .tag{background:#e6efff;border-radius:6px;padding:2px 8px;font-size:.8rem}\ntable{border-collapse:collapse;width:100%} td,th{border-bottom:1px solid #d6e2f5;padding:6px;text-align:left}\n</style></head><body>${body}</body></html>`;\n}\n// ===== end of shared helpers =====\n\n// Booking step 1: is this a genuine link from one of our emails?\n// The signature covers the invite and the time, so changing either makes the link invalid.\nconst s = store();\nconst q = $input.first().json.query || {};\nconst genuine = q.invite && q.slot && sameSignature(sign(`book|${q.invite}|${q.slot}`), q.sig) && s.invites[q.invite];\nif (!genuine) {\n  log(s, 'booking_link_refused', { invite: q.invite || null });\n  return [{ json: { ok: false, html: page('Link not valid', '<h1>This link is not valid</h1>' +\n    '<p>It may have been changed or copied wrongly. Please use the buttons in your invitation email.</p>') } }];\n}\nreturn [{ json: { ok: true, invite_id: q.invite, slot: q.slot } }];\n"
+      }
+    },
+    {
+      "id": "3df01db2-56b8-5b47-9d96-0ca7f44a62bb",
+      "name": "Genuine link?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        540
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "3df01db2-56b8-5b47-9d96-0ca7f44a62bb",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "0e4df5cf-5330-57c9-ba49-4a0f618c3684",
+      "name": "Book it or offer new times",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        460
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== Shared settings and helpers. build_workflow.py puts this at the top of every Code node. =====\n// To change a setting: edit it here, run  .venv/bin/python n8n/build_workflow.py  and import again.\n\nconst SETTINGS = {\n  testMode: true,             // true: emails are saved to the outbox page, never sent; calendar is simulated\n  timezone: 'Europe/London',  // interview times are UK working hours\n  workdayStartHour: 9,        // first slot starts 09:00\n  workdayEndHour: 17,         // last slot must end by 17:00\n  slotMinutes: 45,            // length of an interview\n  slotsPerInvite: 3,          // how many times each candidate is offered\n  workingDaysAhead: 5,        // offer times from the next 5 working days (Monday to Friday)\n  reminderHoursBefore: 24,    // reminder email this long before the interview\n  followUpAfterHours: 72,     // one polite reminder if no time is picked within 3 days\n  alertRecruiterAfterHours: 120, // after 5 days with no answer, tell the recruiter (never reject automatically)\n  requestMaxAgeMinutes: 10,   // an invite request older than this is refused\n  baseUrl: 'http://localhost:5678/webhook/interview',\n  recruiterEmail: 'recruiter@example.com',\n  interviewerName: 'the People Analytics team',\n};\n\nconst crypto = require('crypto');\nconst SECRET = $env.INTERVIEW_SECRET;  // shared with the screener app; set by start_n8n.sh, never written down here\n\n// A signature only the screener app and this workflow can make (HMAC-SHA256 with the shared secret).\nfunction sign(text) {\n  return crypto.createHmac('sha256', SECRET).update(text).digest('hex');\n}\n\n// Compares two signatures safely (in constant time, so nobody can guess one by timing the answers).\nfunction sameSignature(a, b) {\n  a = String(a || ''); b = String(b || '');\n  return a.length === b.length && a.length > 0 && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));\n}\n\n// Everything the workflow remembers between runs: invites, bookings (the simulated calendar),\n// the outbox (emails that would have been sent) and the audit log. n8n keeps this with the workflow.\nfunction store() {\n  const s = $getWorkflowStaticData('global');\n  s.invites = s.invites || {};       // invite id -> who, which times were offered, status\n  s.bookings = s.bookings || {};     // slot start time -> invite id (the simulated calendar)\n  s.outbox = s.outbox || [];         // every email, in order\n  s.log = s.log || [];               // every step, in order\n  s.seenRequests = s.seenRequests || {};  // request ids already used (each request works once)\n  return s;\n}\n\nfunction now() {\n  return DateTime.now().setZone(SETTINGS.timezone);\n}\n\nfunction isoTime(dt) {\n  return dt.toISO({ suppressMilliseconds: true });\n}\n\nfunction log(s, event, details) {\n  s.log.push({ time: isoTime(now()), event, ...details });\n}\n\n// Text from a resume or a request is always escaped before it goes into a web page.\nfunction esc(text) {\n  return String(text ?? '').replace(/[&<>\"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]));\n}\n\nfunction slotLabel(iso) {\n  return DateTime.fromISO(iso, { zone: SETTINGS.timezone }).toFormat(\"cccc d LLLL 'at' HH:mm\");\n}\n\n// The next free interview times: Monday to Friday, within working hours, starting tomorrow.\n// A time is not free if it is booked, or offered to someone who has not answered yet.\nfunction freeSlots(s, count, from) {\n  const taken = new Set(Object.keys(s.bookings));\n  for (const invite of Object.values(s.invites)) {\n    if (invite.status === 'invited') invite.offered.forEach(slot => taken.add(slot));\n  }\n  const slots = [];\n  let day = from.plus({ days: 1 }).startOf('day');\n  let workingDays = 0;\n  while (slots.length < count && workingDays < SETTINGS.workingDaysAhead) {\n    if (day.weekday <= 5) {  // 1 = Monday ... 5 = Friday\n      workingDays++;\n      for (let hour = SETTINGS.workdayStartHour;\n           hour * 60 + SETTINGS.slotMinutes <= SETTINGS.workdayEndHour * 60 && slots.length < count; hour++) {\n        const slot = isoTime(day.set({ hour }));\n        if (!taken.has(slot)) slots.push(slot);\n      }\n    }\n    day = day.plus({ days: 1 });\n  }\n  return slots;\n}\n\n// The link behind each time button. The signature means a link cannot be made up or changed.\nfunction bookingLink(inviteId, slot) {\n  const sig = sign(`book|${inviteId}|${slot}`);\n  return `${SETTINGS.baseUrl}/book?invite=${encodeURIComponent(inviteId)}&slot=${encodeURIComponent(slot)}&sig=${sig}`;\n}\n\n// \"Sends\" an email. In test mode it is only saved to the outbox page and the log.\n// To send for real, connect a Gmail node after the node that calls this (see n8n/README.md).\nfunction deliver(s, email) {\n  const message = { id: `email-${s.outbox.length + 1}`, created: isoTime(now()), sent: !SETTINGS.testMode, ...email };\n  s.outbox.push(message);\n  log(s, SETTINGS.testMode ? 'email_saved_to_outbox' : 'email_sent', { to: email.to, subject: email.subject, kind: email.kind });\n  return message;\n}\n\n// The time buttons in an invite or follow-up email, as plain text and as a small web page.\nfunction slotButtons(invite) {\n  return invite.offered.map(slot => ({ label: slotLabel(slot), link: bookingLink(invite.id, slot) }));\n}\n\nfunction page(title, body) {\n  return `<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>${esc(title)}</title><style>\nbody{font-family:-apple-system,Segoe UI,Arial,sans-serif;background:#f5f9ff;color:#14315c;max-width:760px;margin:32px auto;padding:0 16px;line-height:1.5}\nh1{font-size:1.5rem} .card{background:#fff;border:1px solid #d6e2f5;border-radius:12px;padding:16px 20px;margin:14px 0}\na.button{display:inline-block;background:#1f5fd6;color:#fff;text-decoration:none;padding:8px 14px;border-radius:8px;margin:4px 6px 4px 0}\n.muted{color:#5b7299;font-size:.9rem} .tag{background:#e6efff;border-radius:6px;padding:2px 8px;font-size:.8rem}\ntable{border-collapse:collapse;width:100%} td,th{border-bottom:1px solid #d6e2f5;padding:6px;text-align:left}\n</style></head><body>${body}</body></html>`;\n}\n// ===== end of shared helpers =====\n\n// Booking step 2: book the chosen time, or explain what happened.\n// - already booked: show the existing booking (clicking twice is harmless)\n// - the time was just taken by someone else: offer 3 new times by email\n// - otherwise: put it in the calendar, send a confirmation, and show \"You're booked\"\nconst s = store();\nconst { invite_id, slot } = $input.first().json;\nconst invite = s.invites[invite_id];\nlet html;\n\nif (invite.status === 'booked') {\n  html = page('Already booked', `<h1>You're already booked</h1><div class=\"card\">Your interview is on <b>${esc(slotLabel(invite.slot))}</b>.</div>`);\n} else if (!invite.offered.includes(slot)) {\n  html = page('Time not offered', '<h1>That time was not offered to you</h1><p>Please use the buttons in your latest email.</p>');\n} else if (s.bookings[slot]) {\n  // Someone else booked this time a moment ago: offer fresh times.\n  invite.offered = freeSlots(s, SETTINGS.slotsPerInvite, now());  // the old times are given up\n  log(s, 'slot_clash', { invite: invite.id, name: invite.name, wanted: slot, new_offer: invite.offered });\n  deliver(s, {\n    kind: 'new_times', to: invite.email, invite: invite.id, subject: `New interview times: ${invite.role}`,\n    text: `Dear ${invite.name},\\n\\nSorry, the time you chose was taken just before you clicked. Here are new times:\\n` +\n          slotButtons(invite).map(b => `- ${b.label}`).join('\\n') + `\\n\\nKind regards,\\nRecruitment team`,\n    buttons: slotButtons(invite),\n  });\n  html = page('Time just taken', '<h1>Sorry, that time was just taken</h1><p>We have emailed you three new times.</p>');\n} else {\n  s.bookings[slot] = invite.id;           // the simulated calendar\n  invite.status = 'booked';\n  invite.slot = slot;\n  invite.booked_at = isoTime(now());\n  invite.reminded = false;\n  const end = DateTime.fromISO(slot, { zone: SETTINGS.timezone }).plus({ minutes: SETTINGS.slotMinutes });\n  log(s, 'calendar_event_created', { invite: invite.id, name: invite.name, start: slot, end: isoTime(end),\n                                     calendar: SETTINGS.testMode ? 'simulated' : 'Google Calendar' });\n  deliver(s, {\n    kind: 'confirmation', to: invite.email, invite: invite.id, subject: `Interview confirmed: ${invite.role}`,\n    text: `Dear ${invite.name},\\n\\nYour interview is confirmed for ${slotLabel(slot)} (${SETTINGS.slotMinutes} minutes, ` +\n          `UK time). The video link will be in the calendar invitation.\\n\\nKind regards,\\nRecruitment team`,\n  });\n  html = page('Interview booked', `<h1>You're booked</h1><div class=\"card\">Your interview is on <b>${esc(slotLabel(slot))}</b>` +\n              ` (${SETTINGS.slotMinutes} minutes, UK time). A confirmation email is on its way.</div>`);\n}\nreturn [{ json: { html } }];\n"
+      }
+    },
+    {
+      "id": "caa0db89-ed87-57d0-8051-9520b996dc81",
+      "name": "Show the booking page",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        880,
+        460
+      ],
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "0cacd8b9-5414-5a15-846b-cb479f29ac5f",
+      "name": "Show 'link not valid'",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        660,
+        640
+      ],
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseCode": 403,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "82a43e12-2832-54c9-83ef-658713549e4c",
+      "name": "Note: follow-ups",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        760
+      ],
+      "parameters": {
+        "content": "## 3. Reminders and follow-ups\nEvery 15 minutes: a reminder 24 hours before each interview, one follow-up after 3 days without an answer, and a note to the recruiter after 5 days. Nobody is rejected automatically.",
+        "width": 1180,
+        "height": 380
+      }
+    },
+    {
+      "id": "faf485e8-ee10-59d3-a90d-09d27e1358b6",
+      "name": "Every 15 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        920
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "a78d0e85-7500-5141-9a21-9ee939c0968c",
+      "name": "Reminders and follow-ups",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        920
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== Shared settings and helpers. build_workflow.py puts this at the top of every Code node. =====\n// To change a setting: edit it here, run  .venv/bin/python n8n/build_workflow.py  and import again.\n\nconst SETTINGS = {\n  testMode: true,             // true: emails are saved to the outbox page, never sent; calendar is simulated\n  timezone: 'Europe/London',  // interview times are UK working hours\n  workdayStartHour: 9,        // first slot starts 09:00\n  workdayEndHour: 17,         // last slot must end by 17:00\n  slotMinutes: 45,            // length of an interview\n  slotsPerInvite: 3,          // how many times each candidate is offered\n  workingDaysAhead: 5,        // offer times from the next 5 working days (Monday to Friday)\n  reminderHoursBefore: 24,    // reminder email this long before the interview\n  followUpAfterHours: 72,     // one polite reminder if no time is picked within 3 days\n  alertRecruiterAfterHours: 120, // after 5 days with no answer, tell the recruiter (never reject automatically)\n  requestMaxAgeMinutes: 10,   // an invite request older than this is refused\n  baseUrl: 'http://localhost:5678/webhook/interview',\n  recruiterEmail: 'recruiter@example.com',\n  interviewerName: 'the People Analytics team',\n};\n\nconst crypto = require('crypto');\nconst SECRET = $env.INTERVIEW_SECRET;  // shared with the screener app; set by start_n8n.sh, never written down here\n\n// A signature only the screener app and this workflow can make (HMAC-SHA256 with the shared secret).\nfunction sign(text) {\n  return crypto.createHmac('sha256', SECRET).update(text).digest('hex');\n}\n\n// Compares two signatures safely (in constant time, so nobody can guess one by timing the answers).\nfunction sameSignature(a, b) {\n  a = String(a || ''); b = String(b || '');\n  return a.length === b.length && a.length > 0 && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));\n}\n\n// Everything the workflow remembers between runs: invites, bookings (the simulated calendar),\n// the outbox (emails that would have been sent) and the audit log. n8n keeps this with the workflow.\nfunction store() {\n  const s = $getWorkflowStaticData('global');\n  s.invites = s.invites || {};       // invite id -> who, which times were offered, status\n  s.bookings = s.bookings || {};     // slot start time -> invite id (the simulated calendar)\n  s.outbox = s.outbox || [];         // every email, in order\n  s.log = s.log || [];               // every step, in order\n  s.seenRequests = s.seenRequests || {};  // request ids already used (each request works once)\n  return s;\n}\n\nfunction now() {\n  return DateTime.now().setZone(SETTINGS.timezone);\n}\n\nfunction isoTime(dt) {\n  return dt.toISO({ suppressMilliseconds: true });\n}\n\nfunction log(s, event, details) {\n  s.log.push({ time: isoTime(now()), event, ...details });\n}\n\n// Text from a resume or a request is always escaped before it goes into a web page.\nfunction esc(text) {\n  return String(text ?? '').replace(/[&<>\"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]));\n}\n\nfunction slotLabel(iso) {\n  return DateTime.fromISO(iso, { zone: SETTINGS.timezone }).toFormat(\"cccc d LLLL 'at' HH:mm\");\n}\n\n// The next free interview times: Monday to Friday, within working hours, starting tomorrow.\n// A time is not free if it is booked, or offered to someone who has not answered yet.\nfunction freeSlots(s, count, from) {\n  const taken = new Set(Object.keys(s.bookings));\n  for (const invite of Object.values(s.invites)) {\n    if (invite.status === 'invited') invite.offered.forEach(slot => taken.add(slot));\n  }\n  const slots = [];\n  let day = from.plus({ days: 1 }).startOf('day');\n  let workingDays = 0;\n  while (slots.length < count && workingDays < SETTINGS.workingDaysAhead) {\n    if (day.weekday <= 5) {  // 1 = Monday ... 5 = Friday\n      workingDays++;\n      for (let hour = SETTINGS.workdayStartHour;\n           hour * 60 + SETTINGS.slotMinutes <= SETTINGS.workdayEndHour * 60 && slots.length < count; hour++) {\n        const slot = isoTime(day.set({ hour }));\n        if (!taken.has(slot)) slots.push(slot);\n      }\n    }\n    day = day.plus({ days: 1 });\n  }\n  return slots;\n}\n\n// The link behind each time button. The signature means a link cannot be made up or changed.\nfunction bookingLink(inviteId, slot) {\n  const sig = sign(`book|${inviteId}|${slot}`);\n  return `${SETTINGS.baseUrl}/book?invite=${encodeURIComponent(inviteId)}&slot=${encodeURIComponent(slot)}&sig=${sig}`;\n}\n\n// \"Sends\" an email. In test mode it is only saved to the outbox page and the log.\n// To send for real, connect a Gmail node after the node that calls this (see n8n/README.md).\nfunction deliver(s, email) {\n  const message = { id: `email-${s.outbox.length + 1}`, created: isoTime(now()), sent: !SETTINGS.testMode, ...email };\n  s.outbox.push(message);\n  log(s, SETTINGS.testMode ? 'email_saved_to_outbox' : 'email_sent', { to: email.to, subject: email.subject, kind: email.kind });\n  return message;\n}\n\n// The time buttons in an invite or follow-up email, as plain text and as a small web page.\nfunction slotButtons(invite) {\n  return invite.offered.map(slot => ({ label: slotLabel(slot), link: bookingLink(invite.id, slot) }));\n}\n\nfunction page(title, body) {\n  return `<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>${esc(title)}</title><style>\nbody{font-family:-apple-system,Segoe UI,Arial,sans-serif;background:#f5f9ff;color:#14315c;max-width:760px;margin:32px auto;padding:0 16px;line-height:1.5}\nh1{font-size:1.5rem} .card{background:#fff;border:1px solid #d6e2f5;border-radius:12px;padding:16px 20px;margin:14px 0}\na.button{display:inline-block;background:#1f5fd6;color:#fff;text-decoration:none;padding:8px 14px;border-radius:8px;margin:4px 6px 4px 0}\n.muted{color:#5b7299;font-size:.9rem} .tag{background:#e6efff;border-radius:6px;padding:2px 8px;font-size:.8rem}\ntable{border-collapse:collapse;width:100%} td,th{border-bottom:1px solid #d6e2f5;padding:6px;text-align:left}\n</style></head><body>${body}</body></html>`;\n}\n// ===== end of shared helpers =====\n\n// Every 15 minutes: send reminders and follow-ups. Nobody is ever rejected here.\n// - 24 hours before a booked interview: a reminder to the candidate\n// - no time picked after 3 days: one polite follow-up with the same times\n// - still nothing after 5 days: a note to the recruiter, who decides what to do\n// In test mode the \"Run checks\" link can pretend it is later (?hours_later=48), so this can be tried now.\nconst s = store();\nconst q = ($input.first().json || {}).query || {};\nconst later = SETTINGS.testMode ? Number(q.hours_later || 0) : 0;\nconst at = now().plus({ hours: later });\nconst done = [];\n\nfor (const invite of Object.values(s.invites)) {\n  if (invite.status === 'booked' && !invite.reminded) {\n    const start = DateTime.fromISO(invite.slot, { zone: SETTINGS.timezone });\n    const hoursToGo = start.diff(at, 'hours').hours;\n    if (hoursToGo > 0 && hoursToGo <= SETTINGS.reminderHoursBefore) {\n      deliver(s, { kind: 'reminder', to: invite.email, invite: invite.id, subject: `Reminder: interview ${slotLabel(invite.slot)}`,\n                   text: `Dear ${invite.name},\\n\\nA reminder that your interview is on ${slotLabel(invite.slot)}.\\n\\nKind regards,\\nRecruitment team` });\n      invite.reminded = true;\n      done.push(`reminder to ${invite.name}`);\n    }\n  }\n  if (invite.status === 'invited') {\n    const waited = at.diff(DateTime.fromISO(invite.invited_at), 'hours').hours;\n    if (waited >= SETTINGS.followUpAfterHours && !invite.followed_up) {\n      deliver(s, { kind: 'follow_up', to: invite.email, invite: invite.id, subject: `Interview times still available: ${invite.role}`,\n                   text: `Dear ${invite.name},\\n\\nJust checking you saw our invitation. These times are still held for you:\\n` +\n                         slotButtons(invite).map(b => `- ${b.label}`).join('\\n') + `\\n\\nKind regards,\\nRecruitment team`,\n                   buttons: slotButtons(invite) });\n      invite.followed_up = true;\n      done.push(`follow-up to ${invite.name}`);\n    }\n    if (waited >= SETTINGS.alertRecruiterAfterHours && !invite.recruiter_alerted) {\n      deliver(s, { kind: 'recruiter_alert', to: SETTINGS.recruiterEmail, invite: invite.id,\n                   subject: `No answer from ${invite.name}`,\n                   text: `${invite.name} has not picked an interview time after ${SETTINGS.alertRecruiterAfterHours / 24} days ` +\n                         `and one follow-up. Please decide whether to call, wait, or close this invitation.` });\n      invite.recruiter_alerted = true;\n      done.push(`recruiter told about ${invite.name}`);\n    }\n  }\n}\nlog(s, 'checks_ran', { pretend_hours_later: later, actions: done });\nreturn [{ json: { ok: true, pretend_hours_later: later, actions: done } }];\n"
+      }
+    },
+    {
+      "id": "bf7c707e-14fb-5c0b-976b-ac8e7d11d799",
+      "name": "Run the checks now (test mode)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        1060
+      ],
+      "webhookId": "74306ce5-87aa-58d6-8883-78509ba1334f",
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "interview/checks",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "a35d5a22-6fad-52ae-be68-4edda633bf06",
+      "name": "Reminders and follow-ups (on request)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        1060
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== Shared settings and helpers. build_workflow.py puts this at the top of every Code node. =====\n// To change a setting: edit it here, run  .venv/bin/python n8n/build_workflow.py  and import again.\n\nconst SETTINGS = {\n  testMode: true,             // true: emails are saved to the outbox page, never sent; calendar is simulated\n  timezone: 'Europe/London',  // interview times are UK working hours\n  workdayStartHour: 9,        // first slot starts 09:00\n  workdayEndHour: 17,         // last slot must end by 17:00\n  slotMinutes: 45,            // length of an interview\n  slotsPerInvite: 3,          // how many times each candidate is offered\n  workingDaysAhead: 5,        // offer times from the next 5 working days (Monday to Friday)\n  reminderHoursBefore: 24,    // reminder email this long before the interview\n  followUpAfterHours: 72,     // one polite reminder if no time is picked within 3 days\n  alertRecruiterAfterHours: 120, // after 5 days with no answer, tell the recruiter (never reject automatically)\n  requestMaxAgeMinutes: 10,   // an invite request older than this is refused\n  baseUrl: 'http://localhost:5678/webhook/interview',\n  recruiterEmail: 'recruiter@example.com',\n  interviewerName: 'the People Analytics team',\n};\n\nconst crypto = require('crypto');\nconst SECRET = $env.INTERVIEW_SECRET;  // shared with the screener app; set by start_n8n.sh, never written down here\n\n// A signature only the screener app and this workflow can make (HMAC-SHA256 with the shared secret).\nfunction sign(text) {\n  return crypto.createHmac('sha256', SECRET).update(text).digest('hex');\n}\n\n// Compares two signatures safely (in constant time, so nobody can guess one by timing the answers).\nfunction sameSignature(a, b) {\n  a = String(a || ''); b = String(b || '');\n  return a.length === b.length && a.length > 0 && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));\n}\n\n// Everything the workflow remembers between runs: invites, bookings (the simulated calendar),\n// the outbox (emails that would have been sent) and the audit log. n8n keeps this with the workflow.\nfunction store() {\n  const s = $getWorkflowStaticData('global');\n  s.invites = s.invites || {};       // invite id -> who, which times were offered, status\n  s.bookings = s.bookings || {};     // slot start time -> invite id (the simulated calendar)\n  s.outbox = s.outbox || [];         // every email, in order\n  s.log = s.log || [];               // every step, in order\n  s.seenRequests = s.seenRequests || {};  // request ids already used (each request works once)\n  return s;\n}\n\nfunction now() {\n  return DateTime.now().setZone(SETTINGS.timezone);\n}\n\nfunction isoTime(dt) {\n  return dt.toISO({ suppressMilliseconds: true });\n}\n\nfunction log(s, event, details) {\n  s.log.push({ time: isoTime(now()), event, ...details });\n}\n\n// Text from a resume or a request is always escaped before it goes into a web page.\nfunction esc(text) {\n  return String(text ?? '').replace(/[&<>\"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]));\n}\n\nfunction slotLabel(iso) {\n  return DateTime.fromISO(iso, { zone: SETTINGS.timezone }).toFormat(\"cccc d LLLL 'at' HH:mm\");\n}\n\n// The next free interview times: Monday to Friday, within working hours, starting tomorrow.\n// A time is not free if it is booked, or offered to someone who has not answered yet.\nfunction freeSlots(s, count, from) {\n  const taken = new Set(Object.keys(s.bookings));\n  for (const invite of Object.values(s.invites)) {\n    if (invite.status === 'invited') invite.offered.forEach(slot => taken.add(slot));\n  }\n  const slots = [];\n  let day = from.plus({ days: 1 }).startOf('day');\n  let workingDays = 0;\n  while (slots.length < count && workingDays < SETTINGS.workingDaysAhead) {\n    if (day.weekday <= 5) {  // 1 = Monday ... 5 = Friday\n      workingDays++;\n      for (let hour = SETTINGS.workdayStartHour;\n           hour * 60 + SETTINGS.slotMinutes <= SETTINGS.workdayEndHour * 60 && slots.length < count; hour++) {\n        const slot = isoTime(day.set({ hour }));\n        if (!taken.has(slot)) slots.push(slot);\n      }\n    }\n    day = day.plus({ days: 1 });\n  }\n  return slots;\n}\n\n// The link behind each time button. The signature means a link cannot be made up or changed.\nfunction bookingLink(inviteId, slot) {\n  const sig = sign(`book|${inviteId}|${slot}`);\n  return `${SETTINGS.baseUrl}/book?invite=${encodeURIComponent(inviteId)}&slot=${encodeURIComponent(slot)}&sig=${sig}`;\n}\n\n// \"Sends\" an email. In test mode it is only saved to the outbox page and the log.\n// To send for real, connect a Gmail node after the node that calls this (see n8n/README.md).\nfunction deliver(s, email) {\n  const message = { id: `email-${s.outbox.length + 1}`, created: isoTime(now()), sent: !SETTINGS.testMode, ...email };\n  s.outbox.push(message);\n  log(s, SETTINGS.testMode ? 'email_saved_to_outbox' : 'email_sent', { to: email.to, subject: email.subject, kind: email.kind });\n  return message;\n}\n\n// The time buttons in an invite or follow-up email, as plain text and as a small web page.\nfunction slotButtons(invite) {\n  return invite.offered.map(slot => ({ label: slotLabel(slot), link: bookingLink(invite.id, slot) }));\n}\n\nfunction page(title, body) {\n  return `<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>${esc(title)}</title><style>\nbody{font-family:-apple-system,Segoe UI,Arial,sans-serif;background:#f5f9ff;color:#14315c;max-width:760px;margin:32px auto;padding:0 16px;line-height:1.5}\nh1{font-size:1.5rem} .card{background:#fff;border:1px solid #d6e2f5;border-radius:12px;padding:16px 20px;margin:14px 0}\na.button{display:inline-block;background:#1f5fd6;color:#fff;text-decoration:none;padding:8px 14px;border-radius:8px;margin:4px 6px 4px 0}\n.muted{color:#5b7299;font-size:.9rem} .tag{background:#e6efff;border-radius:6px;padding:2px 8px;font-size:.8rem}\ntable{border-collapse:collapse;width:100%} td,th{border-bottom:1px solid #d6e2f5;padding:6px;text-align:left}\n</style></head><body>${body}</body></html>`;\n}\n// ===== end of shared helpers =====\n\n// Every 15 minutes: send reminders and follow-ups. Nobody is ever rejected here.\n// - 24 hours before a booked interview: a reminder to the candidate\n// - no time picked after 3 days: one polite follow-up with the same times\n// - still nothing after 5 days: a note to the recruiter, who decides what to do\n// In test mode the \"Run checks\" link can pretend it is later (?hours_later=48), so this can be tried now.\nconst s = store();\nconst q = ($input.first().json || {}).query || {};\nconst later = SETTINGS.testMode ? Number(q.hours_later || 0) : 0;\nconst at = now().plus({ hours: later });\nconst done = [];\n\nfor (const invite of Object.values(s.invites)) {\n  if (invite.status === 'booked' && !invite.reminded) {\n    const start = DateTime.fromISO(invite.slot, { zone: SETTINGS.timezone });\n    const hoursToGo = start.diff(at, 'hours').hours;\n    if (hoursToGo > 0 && hoursToGo <= SETTINGS.reminderHoursBefore) {\n      deliver(s, { kind: 'reminder', to: invite.email, invite: invite.id, subject: `Reminder: interview ${slotLabel(invite.slot)}`,\n                   text: `Dear ${invite.name},\\n\\nA reminder that your interview is on ${slotLabel(invite.slot)}.\\n\\nKind regards,\\nRecruitment team` });\n      invite.reminded = true;\n      done.push(`reminder to ${invite.name}`);\n    }\n  }\n  if (invite.status === 'invited') {\n    const waited = at.diff(DateTime.fromISO(invite.invited_at), 'hours').hours;\n    if (waited >= SETTINGS.followUpAfterHours && !invite.followed_up) {\n      deliver(s, { kind: 'follow_up', to: invite.email, invite: invite.id, subject: `Interview times still available: ${invite.role}`,\n                   text: `Dear ${invite.name},\\n\\nJust checking you saw our invitation. These times are still held for you:\\n` +\n                         slotButtons(invite).map(b => `- ${b.label}`).join('\\n') + `\\n\\nKind regards,\\nRecruitment team`,\n                   buttons: slotButtons(invite) });\n      invite.followed_up = true;\n      done.push(`follow-up to ${invite.name}`);\n    }\n    if (waited >= SETTINGS.alertRecruiterAfterHours && !invite.recruiter_alerted) {\n      deliver(s, { kind: 'recruiter_alert', to: SETTINGS.recruiterEmail, invite: invite.id,\n                   subject: `No answer from ${invite.name}`,\n                   text: `${invite.name} has not picked an interview time after ${SETTINGS.alertRecruiterAfterHours / 24} days ` +\n                         `and one follow-up. Please decide whether to call, wait, or close this invitation.` });\n      invite.recruiter_alerted = true;\n      done.push(`recruiter told about ${invite.name}`);\n    }\n  }\n}\nlog(s, 'checks_ran', { pretend_hours_later: later, actions: done });\nreturn [{ json: { ok: true, pretend_hours_later: later, actions: done } }];\n"
+      }
+    },
+    {
+      "id": "c2984848-d348-5805-90cd-68cb3cddfcc3",
+      "name": "Report what was done",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        440,
+        1060
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "f882c9a2-71a4-56a7-a33f-c552c35f318b",
+      "name": "Note: viewing",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        1180
+      ],
+      "parameters": {
+        "content": "## 4. See what happened\n**/outbox**: every email and the calendar. **/log**: the audit log. **/reset** (test mode, signed): start a fresh demo.",
+        "width": 1180,
+        "height": 520
+      }
+    },
+    {
+      "id": "411b5b62-abdd-5fba-b3f6-ad3f3ce7f512",
+      "name": "Open the outbox",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        1340
+      ],
+      "webhookId": "4a38c603-5a84-50de-9863-08fa7d35b5e7",
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "interview/outbox",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "1d054133-a60a-5bfa-a620-eec6dcbf4014",
+      "name": "Show the outbox and calendar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        1340
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== Shared settings and helpers. build_workflow.py puts this at the top of every Code node. =====\n// To change a setting: edit it here, run  .venv/bin/python n8n/build_workflow.py  and import again.\n\nconst SETTINGS = {\n  testMode: true,             // true: emails are saved to the outbox page, never sent; calendar is simulated\n  timezone: 'Europe/London',  // interview times are UK working hours\n  workdayStartHour: 9,        // first slot starts 09:00\n  workdayEndHour: 17,         // last slot must end by 17:00\n  slotMinutes: 45,            // length of an interview\n  slotsPerInvite: 3,          // how many times each candidate is offered\n  workingDaysAhead: 5,        // offer times from the next 5 working days (Monday to Friday)\n  reminderHoursBefore: 24,    // reminder email this long before the interview\n  followUpAfterHours: 72,     // one polite reminder if no time is picked within 3 days\n  alertRecruiterAfterHours: 120, // after 5 days with no answer, tell the recruiter (never reject automatically)\n  requestMaxAgeMinutes: 10,   // an invite request older than this is refused\n  baseUrl: 'http://localhost:5678/webhook/interview',\n  recruiterEmail: 'recruiter@example.com',\n  interviewerName: 'the People Analytics team',\n};\n\nconst crypto = require('crypto');\nconst SECRET = $env.INTERVIEW_SECRET;  // shared with the screener app; set by start_n8n.sh, never written down here\n\n// A signature only the screener app and this workflow can make (HMAC-SHA256 with the shared secret).\nfunction sign(text) {\n  return crypto.createHmac('sha256', SECRET).update(text).digest('hex');\n}\n\n// Compares two signatures safely (in constant time, so nobody can guess one by timing the answers).\nfunction sameSignature(a, b) {\n  a = String(a || ''); b = String(b || '');\n  return a.length === b.length && a.length > 0 && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));\n}\n\n// Everything the workflow remembers between runs: invites, bookings (the simulated calendar),\n// the outbox (emails that would have been sent) and the audit log. n8n keeps this with the workflow.\nfunction store() {\n  const s = $getWorkflowStaticData('global');\n  s.invites = s.invites || {};       // invite id -> who, which times were offered, status\n  s.bookings = s.bookings || {};     // slot start time -> invite id (the simulated calendar)\n  s.outbox = s.outbox || [];         // every email, in order\n  s.log = s.log || [];               // every step, in order\n  s.seenRequests = s.seenRequests || {};  // request ids already used (each request works once)\n  return s;\n}\n\nfunction now() {\n  return DateTime.now().setZone(SETTINGS.timezone);\n}\n\nfunction isoTime(dt) {\n  return dt.toISO({ suppressMilliseconds: true });\n}\n\nfunction log(s, event, details) {\n  s.log.push({ time: isoTime(now()), event, ...details });\n}\n\n// Text from a resume or a request is always escaped before it goes into a web page.\nfunction esc(text) {\n  return String(text ?? '').replace(/[&<>\"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]));\n}\n\nfunction slotLabel(iso) {\n  return DateTime.fromISO(iso, { zone: SETTINGS.timezone }).toFormat(\"cccc d LLLL 'at' HH:mm\");\n}\n\n// The next free interview times: Monday to Friday, within working hours, starting tomorrow.\n// A time is not free if it is booked, or offered to someone who has not answered yet.\nfunction freeSlots(s, count, from) {\n  const taken = new Set(Object.keys(s.bookings));\n  for (const invite of Object.values(s.invites)) {\n    if (invite.status === 'invited') invite.offered.forEach(slot => taken.add(slot));\n  }\n  const slots = [];\n  let day = from.plus({ days: 1 }).startOf('day');\n  let workingDays = 0;\n  while (slots.length < count && workingDays < SETTINGS.workingDaysAhead) {\n    if (day.weekday <= 5) {  // 1 = Monday ... 5 = Friday\n      workingDays++;\n      for (let hour = SETTINGS.workdayStartHour;\n           hour * 60 + SETTINGS.slotMinutes <= SETTINGS.workdayEndHour * 60 && slots.length < count; hour++) {\n        const slot = isoTime(day.set({ hour }));\n        if (!taken.has(slot)) slots.push(slot);\n      }\n    }\n    day = day.plus({ days: 1 });\n  }\n  return slots;\n}\n\n// The link behind each time button. The signature means a link cannot be made up or changed.\nfunction bookingLink(inviteId, slot) {\n  const sig = sign(`book|${inviteId}|${slot}`);\n  return `${SETTINGS.baseUrl}/book?invite=${encodeURIComponent(inviteId)}&slot=${encodeURIComponent(slot)}&sig=${sig}`;\n}\n\n// \"Sends\" an email. In test mode it is only saved to the outbox page and the log.\n// To send for real, connect a Gmail node after the node that calls this (see n8n/README.md).\nfunction deliver(s, email) {\n  const message = { id: `email-${s.outbox.length + 1}`, created: isoTime(now()), sent: !SETTINGS.testMode, ...email };\n  s.outbox.push(message);\n  log(s, SETTINGS.testMode ? 'email_saved_to_outbox' : 'email_sent', { to: email.to, subject: email.subject, kind: email.kind });\n  return message;\n}\n\n// The time buttons in an invite or follow-up email, as plain text and as a small web page.\nfunction slotButtons(invite) {\n  return invite.offered.map(slot => ({ label: slotLabel(slot), link: bookingLink(invite.id, slot) }));\n}\n\nfunction page(title, body) {\n  return `<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>${esc(title)}</title><style>\nbody{font-family:-apple-system,Segoe UI,Arial,sans-serif;background:#f5f9ff;color:#14315c;max-width:760px;margin:32px auto;padding:0 16px;line-height:1.5}\nh1{font-size:1.5rem} .card{background:#fff;border:1px solid #d6e2f5;border-radius:12px;padding:16px 20px;margin:14px 0}\na.button{display:inline-block;background:#1f5fd6;color:#fff;text-decoration:none;padding:8px 14px;border-radius:8px;margin:4px 6px 4px 0}\n.muted{color:#5b7299;font-size:.9rem} .tag{background:#e6efff;border-radius:6px;padding:2px 8px;font-size:.8rem}\ntable{border-collapse:collapse;width:100%} td,th{border-bottom:1px solid #d6e2f5;padding:6px;text-align:left}\n</style></head><body>${body}</body></html>`;\n}\n// ===== end of shared helpers =====\n\n// The outbox page: every email the workflow wrote (in test mode, instead of sending it), newest first,\n// plus the simulated calendar. Clicking a time button here does exactly what it would do in a real email.\nconst s = store();\nconst calendar = Object.entries(s.bookings).sort().map(([slot, id]) =>\n  `<tr><td>${esc(slotLabel(slot))}</td><td>${esc(s.invites[id].name)}</td><td>${esc(s.invites[id].role)}</td></tr>`).join('');\nconst emails = [...s.outbox].reverse().map(m => `<div class=\"card\">\n  <div class=\"muted\">${esc(DateTime.fromISO(m.created).setZone(SETTINGS.timezone).toFormat('d LLL yyyy, HH:mm'))} · to ${esc(m.to)} · <span class=\"tag\">${esc(m.kind)}</span>${m.sent ? '' : ' · <span class=\"tag\">test mode: not sent</span>'}</div>\n  <h3>${esc(m.subject)}</h3><div>${esc(m.text).replace(/\\n/g, '<br>')}</div>\n  ${(m.buttons || []).map(b => `<a class=\"button\" href=\"${esc(b.link)}\">${esc(b.label)}</a>`).join('')}\n</div>`).join('');\nconst html = page('Interview outbox', `<h1>Interview outbox</h1>\n<p class=\"muted\">${SETTINGS.testMode ? 'Test mode: these emails were saved here instead of being sent. ' +\n  'Click a time button to act as the candidate.' : 'Emails sent by the workflow.'}</p>\n<h2>Calendar${SETTINGS.testMode ? ' (simulated)' : ''}</h2>\n${calendar ? `<table><tr><th>When</th><th>Candidate</th><th>Role</th></tr>${calendar}</table>` : '<p class=\"muted\">Nothing booked yet.</p>'}\n<h2>Emails (${s.outbox.length})</h2>${emails || '<p class=\"muted\">No emails yet.</p>'}`);\nreturn [{ json: { html } }];\n"
+      }
+    },
+    {
+      "id": "c2acf710-d0a6-5848-b972-ee14abbaba21",
+      "name": "Outbox page",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        440,
+        1340
+      ],
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "cb984495-180f-58c4-8ec6-aa4e3c15219d",
+      "name": "Open the audit log",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        1480
+      ],
+      "webhookId": "66dfd663-e1d8-55d6-a999-4c14fef44dd3",
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "interview/log",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "84990f29-5476-56b0-8368-621d8b9c7a21",
+      "name": "Show the audit log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        1480
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== Shared settings and helpers. build_workflow.py puts this at the top of every Code node. =====\n// To change a setting: edit it here, run  .venv/bin/python n8n/build_workflow.py  and import again.\n\nconst SETTINGS = {\n  testMode: true,             // true: emails are saved to the outbox page, never sent; calendar is simulated\n  timezone: 'Europe/London',  // interview times are UK working hours\n  workdayStartHour: 9,        // first slot starts 09:00\n  workdayEndHour: 17,         // last slot must end by 17:00\n  slotMinutes: 45,            // length of an interview\n  slotsPerInvite: 3,          // how many times each candidate is offered\n  workingDaysAhead: 5,        // offer times from the next 5 working days (Monday to Friday)\n  reminderHoursBefore: 24,    // reminder email this long before the interview\n  followUpAfterHours: 72,     // one polite reminder if no time is picked within 3 days\n  alertRecruiterAfterHours: 120, // after 5 days with no answer, tell the recruiter (never reject automatically)\n  requestMaxAgeMinutes: 10,   // an invite request older than this is refused\n  baseUrl: 'http://localhost:5678/webhook/interview',\n  recruiterEmail: 'recruiter@example.com',\n  interviewerName: 'the People Analytics team',\n};\n\nconst crypto = require('crypto');\nconst SECRET = $env.INTERVIEW_SECRET;  // shared with the screener app; set by start_n8n.sh, never written down here\n\n// A signature only the screener app and this workflow can make (HMAC-SHA256 with the shared secret).\nfunction sign(text) {\n  return crypto.createHmac('sha256', SECRET).update(text).digest('hex');\n}\n\n// Compares two signatures safely (in constant time, so nobody can guess one by timing the answers).\nfunction sameSignature(a, b) {\n  a = String(a || ''); b = String(b || '');\n  return a.length === b.length && a.length > 0 && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));\n}\n\n// Everything the workflow remembers between runs: invites, bookings (the simulated calendar),\n// the outbox (emails that would have been sent) and the audit log. n8n keeps this with the workflow.\nfunction store() {\n  const s = $getWorkflowStaticData('global');\n  s.invites = s.invites || {};       // invite id -> who, which times were offered, status\n  s.bookings = s.bookings || {};     // slot start time -> invite id (the simulated calendar)\n  s.outbox = s.outbox || [];         // every email, in order\n  s.log = s.log || [];               // every step, in order\n  s.seenRequests = s.seenRequests || {};  // request ids already used (each request works once)\n  return s;\n}\n\nfunction now() {\n  return DateTime.now().setZone(SETTINGS.timezone);\n}\n\nfunction isoTime(dt) {\n  return dt.toISO({ suppressMilliseconds: true });\n}\n\nfunction log(s, event, details) {\n  s.log.push({ time: isoTime(now()), event, ...details });\n}\n\n// Text from a resume or a request is always escaped before it goes into a web page.\nfunction esc(text) {\n  return String(text ?? '').replace(/[&<>\"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]));\n}\n\nfunction slotLabel(iso) {\n  return DateTime.fromISO(iso, { zone: SETTINGS.timezone }).toFormat(\"cccc d LLLL 'at' HH:mm\");\n}\n\n// The next free interview times: Monday to Friday, within working hours, starting tomorrow.\n// A time is not free if it is booked, or offered to someone who has not answered yet.\nfunction freeSlots(s, count, from) {\n  const taken = new Set(Object.keys(s.bookings));\n  for (const invite of Object.values(s.invites)) {\n    if (invite.status === 'invited') invite.offered.forEach(slot => taken.add(slot));\n  }\n  const slots = [];\n  let day = from.plus({ days: 1 }).startOf('day');\n  let workingDays = 0;\n  while (slots.length < count && workingDays < SETTINGS.workingDaysAhead) {\n    if (day.weekday <= 5) {  // 1 = Monday ... 5 = Friday\n      workingDays++;\n      for (let hour = SETTINGS.workdayStartHour;\n           hour * 60 + SETTINGS.slotMinutes <= SETTINGS.workdayEndHour * 60 && slots.length < count; hour++) {\n        const slot = isoTime(day.set({ hour }));\n        if (!taken.has(slot)) slots.push(slot);\n      }\n    }\n    day = day.plus({ days: 1 });\n  }\n  return slots;\n}\n\n// The link behind each time button. The signature means a link cannot be made up or changed.\nfunction bookingLink(inviteId, slot) {\n  const sig = sign(`book|${inviteId}|${slot}`);\n  return `${SETTINGS.baseUrl}/book?invite=${encodeURIComponent(inviteId)}&slot=${encodeURIComponent(slot)}&sig=${sig}`;\n}\n\n// \"Sends\" an email. In test mode it is only saved to the outbox page and the log.\n// To send for real, connect a Gmail node after the node that calls this (see n8n/README.md).\nfunction deliver(s, email) {\n  const message = { id: `email-${s.outbox.length + 1}`, created: isoTime(now()), sent: !SETTINGS.testMode, ...email };\n  s.outbox.push(message);\n  log(s, SETTINGS.testMode ? 'email_saved_to_outbox' : 'email_sent', { to: email.to, subject: email.subject, kind: email.kind });\n  return message;\n}\n\n// The time buttons in an invite or follow-up email, as plain text and as a small web page.\nfunction slotButtons(invite) {\n  return invite.offered.map(slot => ({ label: slotLabel(slot), link: bookingLink(invite.id, slot) }));\n}\n\nfunction page(title, body) {\n  return `<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>${esc(title)}</title><style>\nbody{font-family:-apple-system,Segoe UI,Arial,sans-serif;background:#f5f9ff;color:#14315c;max-width:760px;margin:32px auto;padding:0 16px;line-height:1.5}\nh1{font-size:1.5rem} .card{background:#fff;border:1px solid #d6e2f5;border-radius:12px;padding:16px 20px;margin:14px 0}\na.button{display:inline-block;background:#1f5fd6;color:#fff;text-decoration:none;padding:8px 14px;border-radius:8px;margin:4px 6px 4px 0}\n.muted{color:#5b7299;font-size:.9rem} .tag{background:#e6efff;border-radius:6px;padding:2px 8px;font-size:.8rem}\ntable{border-collapse:collapse;width:100%} td,th{border-bottom:1px solid #d6e2f5;padding:6px;text-align:left}\n</style></head><body>${body}</body></html>`;\n}\n// ===== end of shared helpers =====\n\n// The audit log: every step the workflow took, in order (no secrets are ever written to it).\nconst s = store();\nreturn [{ json: { log: s.log, invites: Object.values(s.invites), calendar: s.bookings } }];\n"
+      }
+    },
+    {
+      "id": "3dca4e53-6dad-5732-b597-e95c50d2019f",
+      "name": "Audit log",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        440,
+        1480
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "b6d0acc8-b259-54f4-a8fd-119b384254ef",
+      "name": "Reset for a new demo",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        1620
+      ],
+      "webhookId": "b16b7443-9799-55db-b151-8714855be27d",
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "interview/reset",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "13ed31c3-1a57-54f9-b9c0-1f8f3f82a80e",
+      "name": "Clear everything (test mode)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        1620
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== Shared settings and helpers. build_workflow.py puts this at the top of every Code node. =====\n// To change a setting: edit it here, run  .venv/bin/python n8n/build_workflow.py  and import again.\n\nconst SETTINGS = {\n  testMode: true,             // true: emails are saved to the outbox page, never sent; calendar is simulated\n  timezone: 'Europe/London',  // interview times are UK working hours\n  workdayStartHour: 9,        // first slot starts 09:00\n  workdayEndHour: 17,         // last slot must end by 17:00\n  slotMinutes: 45,            // length of an interview\n  slotsPerInvite: 3,          // how many times each candidate is offered\n  workingDaysAhead: 5,        // offer times from the next 5 working days (Monday to Friday)\n  reminderHoursBefore: 24,    // reminder email this long before the interview\n  followUpAfterHours: 72,     // one polite reminder if no time is picked within 3 days\n  alertRecruiterAfterHours: 120, // after 5 days with no answer, tell the recruiter (never reject automatically)\n  requestMaxAgeMinutes: 10,   // an invite request older than this is refused\n  baseUrl: 'http://localhost:5678/webhook/interview',\n  recruiterEmail: 'recruiter@example.com',\n  interviewerName: 'the People Analytics team',\n};\n\nconst crypto = require('crypto');\nconst SECRET = $env.INTERVIEW_SECRET;  // shared with the screener app; set by start_n8n.sh, never written down here\n\n// A signature only the screener app and this workflow can make (HMAC-SHA256 with the shared secret).\nfunction sign(text) {\n  return crypto.createHmac('sha256', SECRET).update(text).digest('hex');\n}\n\n// Compares two signatures safely (in constant time, so nobody can guess one by timing the answers).\nfunction sameSignature(a, b) {\n  a = String(a || ''); b = String(b || '');\n  return a.length === b.length && a.length > 0 && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));\n}\n\n// Everything the workflow remembers between runs: invites, bookings (the simulated calendar),\n// the outbox (emails that would have been sent) and the audit log. n8n keeps this with the workflow.\nfunction store() {\n  const s = $getWorkflowStaticData('global');\n  s.invites = s.invites || {};       // invite id -> who, which times were offered, status\n  s.bookings = s.bookings || {};     // slot start time -> invite id (the simulated calendar)\n  s.outbox = s.outbox || [];         // every email, in order\n  s.log = s.log || [];               // every step, in order\n  s.seenRequests = s.seenRequests || {};  // request ids already used (each request works once)\n  return s;\n}\n\nfunction now() {\n  return DateTime.now().setZone(SETTINGS.timezone);\n}\n\nfunction isoTime(dt) {\n  return dt.toISO({ suppressMilliseconds: true });\n}\n\nfunction log(s, event, details) {\n  s.log.push({ time: isoTime(now()), event, ...details });\n}\n\n// Text from a resume or a request is always escaped before it goes into a web page.\nfunction esc(text) {\n  return String(text ?? '').replace(/[&<>\"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]));\n}\n\nfunction slotLabel(iso) {\n  return DateTime.fromISO(iso, { zone: SETTINGS.timezone }).toFormat(\"cccc d LLLL 'at' HH:mm\");\n}\n\n// The next free interview times: Monday to Friday, within working hours, starting tomorrow.\n// A time is not free if it is booked, or offered to someone who has not answered yet.\nfunction freeSlots(s, count, from) {\n  const taken = new Set(Object.keys(s.bookings));\n  for (const invite of Object.values(s.invites)) {\n    if (invite.status === 'invited') invite.offered.forEach(slot => taken.add(slot));\n  }\n  const slots = [];\n  let day = from.plus({ days: 1 }).startOf('day');\n  let workingDays = 0;\n  while (slots.length < count && workingDays < SETTINGS.workingDaysAhead) {\n    if (day.weekday <= 5) {  // 1 = Monday ... 5 = Friday\n      workingDays++;\n      for (let hour = SETTINGS.workdayStartHour;\n           hour * 60 + SETTINGS.slotMinutes <= SETTINGS.workdayEndHour * 60 && slots.length < count; hour++) {\n        const slot = isoTime(day.set({ hour }));\n        if (!taken.has(slot)) slots.push(slot);\n      }\n    }\n    day = day.plus({ days: 1 });\n  }\n  return slots;\n}\n\n// The link behind each time button. The signature means a link cannot be made up or changed.\nfunction bookingLink(inviteId, slot) {\n  const sig = sign(`book|${inviteId}|${slot}`);\n  return `${SETTINGS.baseUrl}/book?invite=${encodeURIComponent(inviteId)}&slot=${encodeURIComponent(slot)}&sig=${sig}`;\n}\n\n// \"Sends\" an email. In test mode it is only saved to the outbox page and the log.\n// To send for real, connect a Gmail node after the node that calls this (see n8n/README.md).\nfunction deliver(s, email) {\n  const message = { id: `email-${s.outbox.length + 1}`, created: isoTime(now()), sent: !SETTINGS.testMode, ...email };\n  s.outbox.push(message);\n  log(s, SETTINGS.testMode ? 'email_saved_to_outbox' : 'email_sent', { to: email.to, subject: email.subject, kind: email.kind });\n  return message;\n}\n\n// The time buttons in an invite or follow-up email, as plain text and as a small web page.\nfunction slotButtons(invite) {\n  return invite.offered.map(slot => ({ label: slotLabel(slot), link: bookingLink(invite.id, slot) }));\n}\n\nfunction page(title, body) {\n  return `<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>${esc(title)}</title><style>\nbody{font-family:-apple-system,Segoe UI,Arial,sans-serif;background:#f5f9ff;color:#14315c;max-width:760px;margin:32px auto;padding:0 16px;line-height:1.5}\nh1{font-size:1.5rem} .card{background:#fff;border:1px solid #d6e2f5;border-radius:12px;padding:16px 20px;margin:14px 0}\na.button{display:inline-block;background:#1f5fd6;color:#fff;text-decoration:none;padding:8px 14px;border-radius:8px;margin:4px 6px 4px 0}\n.muted{color:#5b7299;font-size:.9rem} .tag{background:#e6efff;border-radius:6px;padding:2px 8px;font-size:.8rem}\ntable{border-collapse:collapse;width:100%} td,th{border-bottom:1px solid #d6e2f5;padding:6px;text-align:left}\n</style></head><body>${body}</body></html>`;\n}\n// ===== end of shared helpers =====\n\n// Test mode only: empty the outbox, calendar, invites and log, for a fresh demo.\n// Needs a signed link (made by n8n/try_flow.py), so nobody else can wipe it.\nconst s = store();\nconst q = $input.first().json.query || {};\nif (!SETTINGS.testMode || !sameSignature(sign(`reset|${q.at}`), q.sig) ||\n    Math.abs(now().diff(DateTime.fromISO(q.at || ''), 'minutes').minutes) > SETTINGS.requestMaxAgeMinutes) {\n  return [{ json: { ok: false, reason: 'Reset refused.' } }];\n}\nfor (const key of ['invites', 'bookings', 'outbox', 'log', 'seenRequests']) delete s[key];\nreturn [{ json: { ok: true, reason: 'Everything was cleared.' } }];\n"
+      }
+    },
+    {
+      "id": "a7e9914a-a622-5e52-aa5a-87ec29b46e6f",
+      "name": "Reset result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        440,
+        1620
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Recruiter sends invites": {
+      "main": [
+        [
+          {
+            "node": "Check it came from the screener",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check it came from the screener": {
+      "main": [
+        [
+          {
+            "node": "Genuine request?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Genuine request?": {
+      "main": [
+        [
+          {
+            "node": "Hold 3 free times per candidate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Refuse the request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hold 3 free times per candidate": {
+      "main": [
+        [
+          {
+            "node": "Write and save invite emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write and save invite emails": {
+      "main": [
+        [
+          {
+            "node": "Answer the screener",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Candidate picks a time": {
+      "main": [
+        [
+          {
+            "node": "Check the link is genuine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check the link is genuine": {
+      "main": [
+        [
+          {
+            "node": "Genuine link?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Genuine link?": {
+      "main": [
+        [
+          {
+            "node": "Book it or offer new times",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Show 'link not valid'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Book it or offer new times": {
+      "main": [
+        [
+          {
+            "node": "Show the booking page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every 15 minutes": {
+      "main": [
+        [
+          {
+            "node": "Reminders and follow-ups",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run the checks now (test mode)": {
+      "main": [
+        [
+          {
+            "node": "Reminders and follow-ups (on request)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reminders and follow-ups (on request)": {
+      "main": [
+        [
+          {
+            "node": "Report what was done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Open the outbox": {
+      "main": [
+        [
+          {
+            "node": "Show the outbox and calendar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Show the outbox and calendar": {
+      "main": [
+        [
+          {
+            "node": "Outbox page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Open the audit log": {
+      "main": [
+        [
+          {
+            "node": "Show the audit log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Show the audit log": {
+      "main": [
+        [
+          {
+            "node": "Audit log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reset for a new demo": {
+      "main": [
+        [
+          {
+            "node": "Clear everything (test mode)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clear everything (test mode)": {
+      "main": [
+        [
+          {
+            "node": "Reset result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/London",
+    "saveManualExecutions": true
+  }
+}

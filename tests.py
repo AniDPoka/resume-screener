@@ -349,6 +349,54 @@ assert report["name background"]["groups"]["minority-group name"]["ratio"] < 1, 
 assert report["gender"]["groups"]["female"]["ratio"] == report["gender"]["groups"]["male"]["ratio"] == 1
 assert loop.impact_report([{"bias_pairs": None}]) == {}, "no pairs: no report"
 
+# --- Phase 7: handing approved candidates to n8n ---
+import n8n_bridge  # noqa: E402
+
+assert n8n_bridge.contact(resumes[0]) == {"id": "01_priya_raman", "name": "Priya Raman", "email": "priya.raman@example.com"}
+request = n8n_bridge.build_invite_request(["01_priya_raman.txt", "09_ryan_cole.pdf"], resumes, "HR Data Analyst", "s3cret")
+body = json.loads(request["body"])
+assert [c["name"] for c in body["candidates"]] == ["Priya Raman", "Ryan Cole"] and body["role"] == "HR Data Analyst"
+assert set(body) == {"request_id", "sent_at", "role", "candidates"}, "only what n8n needs"
+assert all(set(c) == {"id", "name", "email"} for c in body["candidates"]), "no scores, flags or AI reasons leave the app"
+assert request["signature"] == n8n_bridge.sign("s3cret", request["body"]), "signed exactly as sent"
+assert request["signature"] != n8n_bridge.sign("other", request["body"]), "another secret gives another signature"
+other = n8n_bridge.build_invite_request(["01_priya_raman.txt"], resumes, "HR Data Analyst", "s3cret")
+assert json.loads(other["body"])["request_id"] != body["request_id"], "every request has its own id (n8n refuses repeats)"
+for bad in ([], ["not_a_resume.txt"]):
+    try:
+        n8n_bridge.build_invite_request(bad, resumes, "HR Data Analyst", "s3cret")
+        raise AssertionError(f"{bad} should be refused")
+    except ValueError:
+        pass
+no_email = {"name": "x.txt", "text": "Name: Sam Lee\nSkills\nExcel"}
+try:
+    n8n_bridge.build_invite_request(["x.txt"], [no_email], "Role", "s3cret")
+    raise AssertionError("a resume without an email should be refused")
+except ValueError as error:
+    assert "no name or email" in str(error)
+
+# The n8n workflow file is up to date with n8n/code/, and holds no secret.
+import importlib.util  # noqa: E402
+
+spec = importlib.util.spec_from_file_location("build_workflow", Path(__file__).parent / "n8n" / "build_workflow.py")
+build_workflow = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(build_workflow)
+built = build_workflow.build()
+saved = json.loads((Path(__file__).parent / "n8n" / "interview_workflow.json").read_text())
+assert saved == built, "n8n/interview_workflow.json is out of date: run .venv/bin/python n8n/build_workflow.py"
+names = {n["name"] for n in built["nodes"]}
+assert all(link["node"] in names for outs in built["connections"].values() for out in outs["main"] for link in out)
+paths = sorted(n["parameters"]["path"] for n in built["nodes"] if n["type"].endswith(".webhook"))
+assert paths == ["interview/book", "interview/checks", "interview/invite", "interview/log", "interview/outbox", "interview/reset"]
+text = json.dumps(built)
+assert "gsk_" not in text and "N8N_SECRET =" not in text, "no key or secret in the workflow file"
+assert "testMode: true" in text, "the workflow file ships in test mode: no real emails"
+import re as _re  # noqa: E402
+
+kinds = set(_re.findall(r"kind: '(\w+)'", "".join(p.read_text() for p in (Path(__file__).parent / "n8n" / "code").glob("*.js"))))
+assert kinds == {"invite", "new_times", "confirmation", "reminder", "follow_up", "recruiter_alert"}, \
+    f"the only emails the workflow writes; there is no rejection email: {kinds}"
+
 # --- Phase 4: the shortlist ---
 people = [{"resume": n, "final_score": s} for n, s in [("d", None), ("c", 50), ("b", 82), ("a", 82)]]
 ranked = loop.shortlist(people)
@@ -417,6 +465,33 @@ try:
     assert [b for b in app.button if "Run the loop" in b.label], "so the Run button is still there"
 finally:
     scorer.connect, scorer.groq_call = scorer_connect, scorer_call
+
+# The n8n invite box: never on the public app (no n8n settings), only on the owner's computer.
+app = AppTest.from_file("app.py", default_timeout=120)
+app.secrets["GROQ_API_KEY"] = ""
+app.run()
+assert not [b for b in app.button if b.label == "Send invites"], "no invite box without n8n settings"
+
+sent = []
+real_send = n8n_bridge.send_invites
+n8n_bridge.send_invites = lambda url, request: sent.append(request) or {
+    "ok": True, "invited": ["Priya Raman"], "skipped": [], "outbox": "http://localhost:5678/webhook/interview/outbox"}
+try:
+    app = AppTest.from_file("app.py", default_timeout=120)
+    app.secrets["GROQ_API_KEY"] = ""
+    app.secrets["N8N_URL"], app.secrets["N8N_SECRET"] = "http://localhost:5678", "test-secret"
+    app.run()
+    send = [b for b in app.button if b.label == "Send invites"][0]
+    assert send.disabled, "nothing can be sent until the recruiter picks someone"
+    app.multiselect(key="invite_choice").set_value(["01_priya_raman.txt"]).run()
+    [b for b in app.button if b.label == "Send invites"][0].click().run()
+    assert not app.exception and len(sent) == 1
+    body = json.loads(sent[0]["body"])
+    assert [c["name"] for c in body["candidates"]] == ["Priya Raman"] and "score" not in sent[0]["body"]
+    assert sent[0]["signature"] == n8n_bridge.sign("test-secret", sent[0]["body"])
+    assert any("Invited: Priya Raman" in m.value for m in app.success)
+finally:
+    n8n_bridge.send_invites = real_send
 
 # A changed data file is loaded again, not remembered from before (the live-app bug).
 import os  # noqa: E402

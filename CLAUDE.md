@@ -135,6 +135,23 @@ injection in resumes). Added, with the owner's approval:
 - Data files are loaded through `load_json(name, stamp(...))` / `load_samples(stamp(...))`: the change
   time is part of the cache key. Without it the live app kept old copies after an in-place update.
 
+## Phase 7 (2026-11-17): interview scheduling with n8n
+
+- Owner's choices: the recruiter approves first (the AI never triggers invites); n8n runs on the Mac;
+  n8n offers 3 free slots; test mode only (emails saved to an outbox, simulated calendar).
+- Node.js 24.22.3 and n8n 2.48.4 are installed in ~/.local (n8n 2.48 needs Node 24); data in
+  ~/.local/n8n-data. Start: `sh n8n/start_n8n.sh`. Reload after editing n8n/code/: stop n8n,
+  `sh n8n/load_workflow.sh`, start again (this clears the workflow's test data).
+- `n8n/code/*.js` are the workflow steps; `n8n/build_workflow.py` joins them (helpers.js first) into
+  `n8n/interview_workflow.json`. tests.py fails if that file is out of date.
+- One workflow, several webhooks (`/webhook/interview/invite|book|checks|outbox|log|reset`) plus a
+  15-minute schedule; state is the workflow's static data (only saved for published-workflow runs).
+- `n8n_bridge.py` signs requests with `N8N_SECRET` (secrets.toml); start_n8n.sh passes it to n8n as
+  INTERVIEW_SECRET. The app's invite box only appears when N8N_URL and N8N_SECRET are in Secrets, so
+  never on the public app.
+- `n8n/try_flow.py` runs the whole flow against the real local n8n (21 checks, all passed on 2026-11-17).
+  It does not run in tests.py, because it needs n8n running.
+
 ## Known limits
 
 - `variants.py` finds the person from the `Name:` line and he/she words. A resume without a

@@ -19,6 +19,7 @@ import streamlit as st
 
 import ingest
 import loop
+import n8n_bridge
 import scorer
 from audit import Audit
 from safety import DailyAllowance, safe
@@ -58,6 +59,48 @@ def load_samples(changed):
 def daily_allowance():
     """One counter for the whole app (numbers only, no visitor data)."""
     return DailyAllowance(RUNS_PER_DAY)
+
+
+def n8n_settings():
+    """(n8n address, shared secret) if this computer is set up for n8n, else None.
+    The public app has neither in its Secrets, so the invite box never appears there."""
+    try:
+        url, secret = st.secrets.get("N8N_URL"), st.secrets.get("N8N_SECRET")
+    except Exception:
+        return None
+    return (url, secret) if url and secret else None
+
+
+def show_invites(shortlist, resumes, role, settings):
+    """The recruiter picks who to interview; n8n then emails each one 3 interview times."""
+    url, secret = settings
+    with st.container(border=True):
+        st.subheader("Send interview invites (n8n)")
+        st.caption("Only on this computer. Tick the people you have decided to interview. n8n then emails each one "
+                   "3 interview times and handles booking, reminders and follow-ups (test mode: emails are saved to "
+                   "the outbox, not sent). Only their name, email and the job title leave this app; scores and "
+                   "flags stay here. Nobody is told 'no' automatically.")
+        by_name = {e["resume"]: e for e in shortlist}
+        chosen = st.multiselect("Candidates to invite", list(by_name), format_func=person_name, key="invite_choice")
+        flagged = [person_name(c) for c in chosen if by_name[c]["needs_human_review"]]
+        if flagged:
+            st.warning("Marked 'needs human review': " + ", ".join(safe(f) for f in flagged)
+                       + ". Invite only if you have looked at them yourself.")
+        if st.button("Send invites", disabled=not chosen):
+            try:
+                request = n8n_bridge.build_invite_request(chosen, resumes, role, secret)
+                state["n8n_answer"] = n8n_bridge.send_invites(url, request)
+            except Exception as error:  # n8n not running, or it refused the request
+                state["n8n_answer"] = {"ok": False, "error": type(error).__name__}
+        answer = state.get("n8n_answer")
+        if answer and answer.get("ok"):
+            st.success("Invited: " + (", ".join(safe(n) for n in answer["invited"]) or "nobody new"))
+            for skip in answer.get("skipped", []):
+                st.caption(f"{safe(skip['name'])}: not invited ({safe(skip['reason'])}).")
+            st.link_button("Open the n8n outbox", answer["outbox"])
+        elif answer:
+            st.error(f"n8n did not take the invites ({safe(answer.get('error') or answer.get('reason', 'refused'))}). "
+                     "Is n8n running? Start it with: sh n8n/start_n8n.sh")
 
 
 def groq_key():
@@ -230,6 +273,8 @@ with shortlist_tab:
     for entry in demo["shortlist"]:
         show_candidate(entry, demo_audit["steps"], key=f"demo_{entry['resume']}")
     download_audit(demo_audit, "demo_audit.json", key="demo_audit")
+    if n8n_settings():
+        show_invites(demo["shortlist"], resumes, job["text"].splitlines()[0].replace("Job title: ", ""), n8n_settings())
 
 with live_tab:
     st.subheader("Run one resume through the whole loop")

@@ -61,6 +61,15 @@ No name, gender or age version scored outside the original's own range.
   preferred white-associated names 85% of the time), and candidates now hide instructions to AI in
   resumes (about 1% of resumes in a 2026 study). Both are tested here.
 
+## Interview scheduling (n8n)
+
+After the recruiter decides who to interview, one click hands them to an **n8n workflow** that writes
+the invites with 3 interview times, books the chosen time, sends a confirmation, a reminder and one
+follow-up, and tells the recruiter if someone never answers. Requests and booking links are signed,
+only name, email and job title leave the screener, and nothing rejects anyone automatically. It runs
+on the owner's computer in test mode (emails saved to an outbox, simulated calendar). See
+[n8n/README.md](n8n/README.md).
+
 ## Design decisions
 
 - **Claimed is not demonstrated.** Code, not the AI, decides whether evidence shows a skill in use,
@@ -114,6 +123,8 @@ Other scripts: `try_one.py` (one resume, real AI), `run_all.py` (all resumes, sa
 | `loop.py` | Score → Check → Revise → Hand off |
 | `audit.py` | The JSON audit file |
 | `app.py` | The web page |
+| `n8n_bridge.py` | Signs and sends the recruiter's approved candidates to n8n (name, email, role only) |
+| `n8n/` | The interview-scheduling workflow, its steps, start scripts and an end-to-end check |
 | `tests.py` | Plain checks with a stand-in AI, including the whole app run headless |
 
 ## Limits and law
