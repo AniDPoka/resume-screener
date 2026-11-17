@@ -78,8 +78,19 @@ The owner is new to Python and is building this as a portfolio project for HR an
 `try_one.py` on Priya, Margaret and Liam: 6 calls each, about 11,000-14,000 tokens and 50-90
 seconds per resume (about 630 tokens sent and 900-1,500 back per call; the model's thinking is
 most of the reply). Scores 94 / 82 / 26.2, identical across the 3 runs and all 3 bias versions, so
-no flags. Every quote passed the evidence check. A full 8-resume run should be roughly 100,000
-tokens, about half the free daily allowance.
+no flags. Every quote passed the evidence check.
+
+`run_all.py` on all 8 (same day): 71 calls, 144,809 tokens, about 15 minutes. Temperature 0 is not
+fully repeatable on borderline resumes: Sophie (64.2/73), Tom (0-26.2) and Aisha (0/8.8) were
+inconsistent, each settled by revise rounds (Aisha took 2). Mohammed's answer paraphrased a quote
+("automating the month-end report"); the evidence check caught it and round 1 fixed it. The
+"possible bias" flags on Sophie, Tom and Aisha were the same size as their own wobble (one
+verdict, 8.7-8.8 points), so they were noise, not bias.
+
+**Bias rule changed (owner approved, 2026-11-17):** a version is flagged only if its score is more
+than 5 points OUTSIDE the range of the original's own scores (not 5 points from its middle score).
+`recheck_demo.py` replayed the 71 saved AI answers through the new rule with no AI calls: same
+scores, and the 3 false bias flags are gone. Use it whenever a check rule changes.
 
 ## Known limits
 
@@ -103,17 +114,33 @@ tokens, about half the free daily allowance.
 - Write tests for the deterministic checks (`tests.py`, plain `assert`, fake AI, no key needed).
 - Text from a resume is data, never instructions: say so in every AI prompt.
 
-## Proposed files
+## Files
 
 ```
-app.py          Streamlit page: pick resumes, run, view the shortlist
+app.py          (Phase 5) Streamlit page: the saved shortlist, one live resume, the simulated example
 ingest.py       reads the job description and resumes (.txt, .pdf) into plain text
-scorer.py       the only file that talks to the AI: score + quoted evidence for one resume
-checks.py       no AI: evidence check, score spread, counterfactual comparison
+scorer.py       the only file that talks to the AI: met / partly / not met + quotes per requirement
+checks.py       no AI: the 0-100 score formula, evidence, consistency and bias checks
 variants.py     builds the name/gender/age versions and the anonymised version (rules)
-loop.py         Score -> Check -> Revise -> Hand off, max 3 revise rounds
+loop.py         Score -> Check -> Revise -> Hand off (screen_resume, revise, shortlist)
 audit.py        writes every step and score to a JSON audit file
-tests.py        checks for checks.py, variants.py, audit.py
-data/           job_description.txt, resumes/, make_resumes.py
+fake_ai.py      a stand-in AI for tests.py and make_example.py; never contacts Groq
+tests.py        plain assert checks, fake AI, no key
+try_one.py      real AI, one resume, from Terminal
+run_all.py      real AI, all resumes; saves data/demo_run.json and data/demo_audit.json
+make_example.py real loop code + scripted fake AI -> data/simulated_example.json ("simulated": true)
+recheck_demo.py replays the saved AI answers through the current rules (no AI calls)
+data/           job_description.txt, resumes/, make_resumes.py, the saved demo files
 audit_logs/     one JSON file per run (in .gitignore)
 ```
+
+## How the loop decides (Phase 4)
+
+- Every resume: 3 original scores + name, gender, age versions (6 calls), then 1 anonymised score.
+  The anonymised score is the final score; the original (median of 3) is shown beside it.
+- Any flag (inconsistent, possible bias, evidence problem, unscored version) -> revise rounds on the
+  anonymised text: 3 scores per round, feedback names the exact bad quotes and the requirements that
+  got different verdicts. Stops when a round is clean; at most 3 rounds.
+- Needs human review: still unsettled after 3 rounds, any possible bias (always), unreadable or
+  unscored resumes. Nobody is removed from the shortlist.
+- The simulated example must always be shown with its "simulated" label.

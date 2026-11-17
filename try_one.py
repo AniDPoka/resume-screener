@@ -1,4 +1,5 @@
-"""Scores and checks ONE resume with the real AI, from Terminal. Uses 6 AI calls.
+"""Runs the whole loop on ONE resume with the real AI, from Terminal. Uses 7 AI calls
+(more if it is flagged and goes through revise rounds).
 
 Run with:  .venv/bin/python try_one.py 01_priya_raman.txt
 (any file name from data/resumes; the first one if you give none)
@@ -12,7 +13,6 @@ import sys
 import tomllib
 from pathlib import Path
 
-import checks
 import ingest
 import loop
 import scorer
@@ -40,27 +40,21 @@ def main():
     resume = ingest.read_resume(path.read_bytes(), path.name)
     job = ingest.read_job(HERE / "data" / "job_description.txt")
 
-    audit = Audit({"model": scorer.MODEL, "temperature": scorer.TEMPERATURE,
-                   "consistency_runs": loop.CONSISTENCY_RUNS, "flag_points": checks.FLAG_POINTS,
-                   "points": {"must_have": checks.MUST_HAVE_POINTS, "nice_to_have": checks.NICE_TO_HAVE_POINTS}},
-                  folder=HERE / "audit_logs")
+    audit = Audit(loop.settings(), folder=HERE / "audit_logs")
     call = scorer.groq_call(scorer.connect(key))
     try:
-        result = loop.check_resume(call, job, resume, audit, on_step=print)
+        entry = loop.screen_resume(call, job, resume, audit, on_step=print)
     except Exception as error:
         # Say what kind of error it was, never its full text (which could include request details).
         audit.log("stopped", reason=f"AI service error: {type(error).__name__}")
         sys.exit(f"The AI service stopped the run ({type(error).__name__}). See {audit.path}")
 
     print()
-    if "error" in result:
-        print(result["error"])
-    else:
-        print(f"Score: {result['score']}   (3 runs: {result['scores']})")
-        print(f"Bias versions vs original: {result['bias']['differences']}")
-        for item in result["judgements"]["must_have"] + result["judgements"]["nice_to_have"]:
-            print(f"  {item['verdict']:8} {item['requirement']}")
-        print("Flags:", result["flags"] or "none")
+    print(f"Final score: {entry['final_score']} ({entry['score_source']})   original: {entry['original_score']}")
+    for item in (entry["judgements"] or {}).get("must_have", []) + (entry["judgements"] or {}).get("nice_to_have", []):
+        print(f"  {item['verdict']:8} {item['requirement']}")
+    print("Revise rounds:", entry["revise_rounds"], "  Resolved:", entry["resolved"] or "nothing to resolve")
+    print("Flags:", entry["flags"] or "none", "  Needs human review:", "YES" if entry["needs_human_review"] else "no")
 
     calls = [u for s in audit.record["steps"] if s["step"] == "score" for u in s["usage"]]
     print(f"\nAI calls: {len(calls)}, tokens: {sum(c['prompt_tokens'] + c['reply_tokens'] for c in calls)}, "

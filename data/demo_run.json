@@ -1,0 +1,710 @@
+{
+  "simulated": false,
+  "created": "2026-11-17T15:27:38",
+  "settings": {
+    "model": "openai/gpt-oss-120b",
+    "temperature": 0,
+    "consistency_runs": 3,
+    "max_revise_rounds": 3,
+    "flag_points": 5,
+    "points": {
+      "must_have": 70,
+      "nice_to_have": 30
+    },
+    "rechecked": "saved AI answers replayed through the current rules"
+  },
+  "job": {
+    "text": "Job title: HR Data Analyst\nTeam: People Analytics, Northbridge Logistics (fictional company)\n\nAbout the role\nYou will turn HR data into clear reports that help managers make fair decisions about their teams.\n\nMust-have:\n- At least 2 years of experience working with HR or people data\n- Advanced Excel (pivot tables, lookups)\n- Building regular reports or dashboards for managers\n- Working knowledge of data protection (GDPR) when handling employee data\n\nNice-to-have:\n- SQL\n- Power BI or Tableau\n- Python\n- Experience with an HR system such as Workday or SAP SuccessFactors\n- CIPD qualification\n",
+    "must_have": [
+      "At least 2 years of experience working with HR or people data",
+      "Advanced Excel (pivot tables, lookups)",
+      "Building regular reports or dashboards for managers",
+      "Working knowledge of data protection (GDPR) when handling employee data"
+    ],
+    "nice_to_have": [
+      "SQL",
+      "Power BI or Tableau",
+      "Python",
+      "Experience with an HR system such as Workday or SAP SuccessFactors",
+      "CIPD qualification"
+    ]
+  },
+  "totals": {
+    "ai_calls": 71,
+    "tokens": 144809,
+    "seconds": 914
+  },
+  "shortlist": [
+    {
+      "rank": 1,
+      "resume": "01_priya_raman.txt",
+      "final_score": 94.0,
+      "original_score": 94.0,
+      "score_source": "anonymised",
+      "judgements": {
+        "must_have": [
+          {
+            "requirement": "At least 2 years of experience working with HR or people data",
+            "verdict": "met",
+            "quotes": [
+              "HR Data Analyst, Calderwood Retail (2021 - present)",
+              "HR Assistant, Fenmoor Council (2019 - 2021)"
+            ],
+            "reason": "More than two years in HR data roles"
+          },
+          {
+            "requirement": "Advanced Excel (pivot tables, lookups)",
+            "verdict": "met",
+            "quotes": [
+              "Kept the headcount report in Excel using pivot tables and XLOOKUP",
+              "Advanced Excel (pivot tables, XLOOKUP)"
+            ],
+            "reason": "Explicit mention of advanced Excel features"
+          },
+          {
+            "requirement": "Building regular reports or dashboards for managers",
+            "verdict": "met",
+            "quotes": [
+              "Built monthly attrition and absence dashboards in Power BI used by 40 managers",
+              "builds monthly headcount and attrition dashboards in Power BI for senior managers"
+            ],
+            "reason": "Creates monthly dashboards for managers"
+          },
+          {
+            "requirement": "Working knowledge of data protection (GDPR) when handling employee data",
+            "verdict": "met",
+            "quotes": [
+              "Ran the yearly GDPR data audit for employee records",
+              "GDPR"
+            ],
+            "reason": "Conducted GDPR audit on employee data"
+          }
+        ],
+        "nice_to_have": [
+          {
+            "requirement": "SQL",
+            "verdict": "met",
+            "quotes": [
+              "Wrote SQL queries against the Workday reporting database",
+              "SQL"
+            ],
+            "reason": "SQL queries are listed"
+          },
+          {
+            "requirement": "Power BI or Tableau",
+            "verdict": "met",
+            "quotes": [
+              "Built monthly attrition and absence dashboards in Power BI used by 40 managers",
+              "Power BI"
+            ],
+            "reason": "Power BI experience shown"
+          },
+          {
+            "requirement": "Python",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "No mention of Python"
+          },
+          {
+            "requirement": "Experience with an HR system such as Workday or SAP SuccessFactors",
+            "verdict": "met",
+            "quotes": [
+              "Wrote SQL queries against the Workday reporting database",
+              "Workday"
+            ],
+            "reason": "Workday referenced"
+          },
+          {
+            "requirement": "CIPD qualification",
+            "verdict": "met",
+            "quotes": [
+              "CIPD Level 5 Associate Diploma in People Management, 2022"
+            ],
+            "reason": "CIPD diploma listed"
+          }
+        ]
+      },
+      "flags": [],
+      "resolved": [],
+      "revise_rounds": 0,
+      "notes": [],
+      "needs_human_review": false
+    },
+    {
+      "rank": 2,
+      "resume": "02_daniel_okafor.txt",
+      "final_score": 94.0,
+      "original_score": 94.0,
+      "score_source": "anonymised",
+      "judgements": {
+        "must_have": [
+          {
+            "requirement": "At least 2 years of experience working with HR or people data",
+            "verdict": "met",
+            "quotes": [
+              "people analytics specialist with 4 years of experience.",
+              "Maintained Excel models with pivot tables and VLOOKUP for HR and finance"
+            ],
+            "reason": "Resume shows 4 years in HR‑related analytics roles."
+          },
+          {
+            "requirement": "Advanced Excel (pivot tables, lookups)",
+            "verdict": "met",
+            "quotes": [
+              "Maintained Excel models with pivot tables and VLOOKUP for HR and finance"
+            ],
+            "reason": "Explicit mention of pivot tables and VLOOKUP."
+          },
+          {
+            "requirement": "Building regular reports or dashboards for managers",
+            "verdict": "met",
+            "quotes": [
+              "Built Tableau dashboards on turnover and time-to-hire for hospital managers",
+              "Automated the weekly recruitment report with Python"
+            ],
+            "reason": "Describes both dashboard creation and recurring report automation."
+          },
+          {
+            "requirement": "Working knowledge of data protection (GDPR) when handling employee data",
+            "verdict": "met",
+            "quotes": [
+              "Wrote data-handling guidance for the team in line with GDPR"
+            ],
+            "reason": "Guidance written specifically to comply with GDPR."
+          }
+        ],
+        "nice_to_have": [
+          {
+            "requirement": "SQL",
+            "verdict": "met",
+            "quotes": [
+              "automates HR reporting with Python and SQL"
+            ],
+            "reason": "SQL listed as a skill and used in reporting."
+          },
+          {
+            "requirement": "Power BI or Tableau",
+            "verdict": "met",
+            "quotes": [
+              "Built Tableau dashboards on turnover and time-to-hire for hospital managers"
+            ],
+            "reason": "Tableau dashboards created for managers."
+          },
+          {
+            "requirement": "Python",
+            "verdict": "met",
+            "quotes": [
+              "Automated the weekly recruitment report with Python"
+            ],
+            "reason": "Python used to automate HR reports."
+          },
+          {
+            "requirement": "Experience with an HR system such as Workday or SAP SuccessFactors",
+            "verdict": "met",
+            "quotes": [
+              "SAP SuccessFactors"
+            ],
+            "reason": "SAP SuccessFactors listed among skills."
+          },
+          {
+            "requirement": "CIPD qualification",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "No mention of CIPD or related certification."
+          }
+        ]
+      },
+      "flags": [],
+      "resolved": [],
+      "revise_rounds": 0,
+      "notes": [],
+      "needs_human_review": false
+    },
+    {
+      "rank": 3,
+      "resume": "05_margaret_ellis.txt",
+      "final_score": 82.0,
+      "original_score": 82.0,
+      "score_source": "anonymised",
+      "judgements": {
+        "must_have": [
+          {
+            "requirement": "At least 2 years of experience working with HR or people data",
+            "verdict": "met",
+            "quotes": [
+              "HR Manager, Ridgeway Engineering (2008 - present)",
+              "HR Officer, Ridgeway Engineering (1994 - 2008)"
+            ],
+            "reason": "30+ years in HR roles shows ample experience"
+          },
+          {
+            "requirement": "Advanced Excel (pivot tables, lookups)",
+            "verdict": "met",
+            "quotes": [
+              "Produced the quarterly workforce report for the board using Excel pivot tables"
+            ],
+            "reason": "Explicit use of pivot tables and VLOOKUP indicates advanced Excel"
+          },
+          {
+            "requirement": "Building regular reports or dashboards for managers",
+            "verdict": "met",
+            "quotes": [
+              "Produced the quarterly workforce report for the board using Excel pivot tables"
+            ],
+            "reason": "Created recurring quarterly reports for senior management"
+          },
+          {
+            "requirement": "Working knowledge of data protection (GDPR) when handling employee data",
+            "verdict": "met",
+            "quotes": [
+              "Wrote the employee data retention policy when GDPR came into force"
+            ],
+            "reason": "Authored GDPR‑related policy for employee data"
+          }
+        ],
+        "nice_to_have": [
+          {
+            "requirement": "SQL",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "No mention of SQL skills"
+          },
+          {
+            "requirement": "Power BI or Tableau",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "No mention of Power BI or Tableau"
+          },
+          {
+            "requirement": "Python",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "No mention of Python"
+          },
+          {
+            "requirement": "Experience with an HR system such as Workday or SAP SuccessFactors",
+            "verdict": "met",
+            "quotes": [
+              "Led the company's move to SAP SuccessFactors in 2019"
+            ],
+            "reason": "Led implementation of SAP SuccessFactors"
+          },
+          {
+            "requirement": "CIPD qualification",
+            "verdict": "met",
+            "quotes": [
+              "CIPD Chartered Member"
+            ],
+            "reason": "CIPD chartered membership listed"
+          }
+        ]
+      },
+      "flags": [],
+      "resolved": [],
+      "revise_rounds": 0,
+      "notes": [],
+      "needs_human_review": false
+    },
+    {
+      "rank": 4,
+      "resume": "03_sophie_clarke.txt",
+      "final_score": 61.2,
+      "original_score": 64.2,
+      "score_source": "anonymised, revised",
+      "judgements": {
+        "must_have": [
+          {
+            "requirement": "At least 2 years of experience working with HR or people data",
+            "verdict": "met",
+            "quotes": [
+              "The candidate is an HR advisor with 3 years of experience.",
+              "HR Advisor, Brookhaven Hotels (2022 - present)",
+              "HR Administrator, Brookhaven Hotels (2021 - 2022)"
+            ],
+            "reason": "Over 2 years of HR roles handling people data."
+          },
+          {
+            "requirement": "Advanced Excel (pivot tables, lookups)",
+            "verdict": "partly",
+            "quotes": [
+              "Used pivot tables to track sickness absence by site",
+              "Excel (pivot tables)"
+            ],
+            "reason": "Shows pivot tables but no evidence of lookup functions."
+          },
+          {
+            "requirement": "Building regular reports or dashboards for managers",
+            "verdict": "met",
+            "quotes": [
+              "Prepared the monthly people report in Excel for the leadership team"
+            ],
+            "reason": "Creates recurring reports for leadership."
+          },
+          {
+            "requirement": "Working knowledge of data protection (GDPR) when handling employee data",
+            "verdict": "met",
+            "quotes": [
+              "Answered subject access requests under GDPR",
+              "GDPR"
+            ],
+            "reason": "Demonstrates GDPR handling of employee data."
+          }
+        ],
+        "nice_to_have": [
+          {
+            "requirement": "SQL",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "No mention of SQL."
+          },
+          {
+            "requirement": "Power BI or Tableau",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "No mention of Power BI or Tableau."
+          },
+          {
+            "requirement": "Python",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "No mention of Python."
+          },
+          {
+            "requirement": "Experience with an HR system such as Workday or SAP SuccessFactors",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "Only generic HR system mentioned, not specific Workday or SAP."
+          },
+          {
+            "requirement": "CIPD qualification",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "No CIPD qualification listed."
+          }
+        ]
+      },
+      "flags": [],
+      "resolved": [
+        "Inconsistent: scores ranged 64.2-73.0"
+      ],
+      "revise_rounds": 1,
+      "notes": [],
+      "needs_human_review": false
+    },
+    {
+      "rank": 5,
+      "resume": "04_mohammed_hassan.pdf",
+      "final_score": 53.0,
+      "original_score": 53.0,
+      "score_source": "anonymised, revised",
+      "judgements": {
+        "must_have": [
+          {
+            "requirement": "At least 2 years of experience working with HR or people data",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "No HR or people data experience shown"
+          },
+          {
+            "requirement": "Advanced Excel (pivot tables, lookups)",
+            "verdict": "met",
+            "quotes": [
+              "Used Excel pivot tables and INDEX MATCH for forecasting models",
+              "Advanced Excel"
+            ],
+            "reason": "Shows use of pivot tables and lookup functions"
+          },
+          {
+            "requirement": "Building regular reports or dashboards for managers",
+            "verdict": "met",
+            "quotes": [
+              "Built Power BI dashboards on monthly spending for budget holders"
+            ],
+            "reason": "Demonstrates building dashboards for managerial audience"
+          },
+          {
+            "requirement": "Working knowledge of data protection (GDPR) when handling employee data",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "No mention of GDPR or data protection"
+          }
+        ],
+        "nice_to_have": [
+          {
+            "requirement": "SQL",
+            "verdict": "met",
+            "quotes": [
+              "Wrote SQL and Python scripts to automate the month-end report"
+            ],
+            "reason": "SQL scripting experience listed"
+          },
+          {
+            "requirement": "Power BI or Tableau",
+            "verdict": "met",
+            "quotes": [
+              "Built Power BI dashboards on monthly spending for budget holders"
+            ],
+            "reason": "Power BI dashboard development shown"
+          },
+          {
+            "requirement": "Python",
+            "verdict": "met",
+            "quotes": [
+              "Wrote SQL and Python scripts to automate the month-end report"
+            ],
+            "reason": "Python scripting experience listed"
+          },
+          {
+            "requirement": "Experience with an HR system such as Workday or SAP SuccessFactors",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "No HR system experience mentioned"
+          },
+          {
+            "requirement": "CIPD qualification",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "No CIPD qualification indicated"
+          }
+        ]
+      },
+      "flags": [],
+      "resolved": [
+        "1 evidence problem(s)"
+      ],
+      "revise_rounds": 1,
+      "notes": [
+        "This PDF contained an image. It was not read or sent to the AI."
+      ],
+      "needs_human_review": false
+    },
+    {
+      "rank": 6,
+      "resume": "08_liam_murphy.pdf",
+      "final_score": 26.2,
+      "original_score": 26.2,
+      "score_source": "anonymised",
+      "judgements": {
+        "must_have": [
+          {
+            "requirement": "At least 2 years of experience working with HR or people data",
+            "verdict": "met",
+            "quotes": [
+              "People Partner, Bright Horizon Logistics (2022 - present)",
+              "Talent Coordinator, Bright Horizon Logistics (2020 - 2022)"
+            ],
+            "reason": "Roles span over 2+ years in HR/people functions."
+          },
+          {
+            "requirement": "Advanced Excel (pivot tables, lookups)",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "No mention of Excel advanced features."
+          },
+          {
+            "requirement": "Building regular reports or dashboards for managers",
+            "verdict": "partly",
+            "quotes": [
+              "Involved in reporting and analytics initiatives"
+            ],
+            "reason": "Indicates reporting work but not explicit regular reports/dashboards."
+          },
+          {
+            "requirement": "Working knowledge of data protection (GDPR) when handling employee data",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "GDPR or data protection not referenced."
+          }
+        ],
+        "nice_to_have": [
+          {
+            "requirement": "SQL",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "SQL not mentioned."
+          },
+          {
+            "requirement": "Power BI or Tableau",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "No BI tools listed."
+          },
+          {
+            "requirement": "Python",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "Python not mentioned."
+          },
+          {
+            "requirement": "Experience with an HR system such as Workday or SAP SuccessFactors",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "No HR system named."
+          },
+          {
+            "requirement": "CIPD qualification",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "CIPD not listed."
+          }
+        ]
+      },
+      "flags": [],
+      "resolved": [],
+      "revise_rounds": 0,
+      "notes": [],
+      "needs_human_review": false
+    },
+    {
+      "rank": 7,
+      "resume": "06_tom_becker.txt",
+      "final_score": 17.5,
+      "original_score": 17.5,
+      "score_source": "anonymised, revised",
+      "judgements": {
+        "must_have": [
+          {
+            "requirement": "At least 2 years of experience working with HR or people data",
+            "verdict": "met",
+            "quotes": [
+              "Wrote weekly staff rotas for a team of 25",
+              "Tracked lateness in a shared spreadsheet"
+            ],
+            "reason": "Shows handling of employee scheduling and attendance data for multiple years."
+          },
+          {
+            "requirement": "Advanced Excel (pivot tables, lookups)",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "Only basic Excel is mentioned, no advanced features."
+          },
+          {
+            "requirement": "Building regular reports or dashboards for managers",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "No evidence of creating reports or dashboards for managers."
+          },
+          {
+            "requirement": "Working knowledge of data protection (GDPR) when handling employee data",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "No mention of GDPR or data protection knowledge."
+          }
+        ],
+        "nice_to_have": [
+          {
+            "requirement": "SQL",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "No SQL experience mentioned."
+          },
+          {
+            "requirement": "Power BI or Tableau",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "No Power BI or Tableau experience mentioned."
+          },
+          {
+            "requirement": "Python",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "No Python experience mentioned."
+          },
+          {
+            "requirement": "Experience with an HR system such as Workday or SAP SuccessFactors",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "No HR system experience mentioned."
+          },
+          {
+            "requirement": "CIPD qualification",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "No CIPD qualification mentioned."
+          }
+        ]
+      },
+      "flags": [],
+      "resolved": [
+        "Inconsistent: scores ranged 0.0-26.2"
+      ],
+      "revise_rounds": 1,
+      "notes": [],
+      "needs_human_review": false
+    },
+    {
+      "rank": 8,
+      "resume": "07_aisha_bello.txt",
+      "final_score": 0.0,
+      "original_score": 0.0,
+      "score_source": "anonymised, revised",
+      "judgements": {
+        "must_have": [
+          {
+            "requirement": "At least 2 years of experience working with HR or people data",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "Only a short internship, not two years of HR experience."
+          },
+          {
+            "requirement": "Advanced Excel (pivot tables, lookups)",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "Resume mentions Excel but not pivot tables or lookups."
+          },
+          {
+            "requirement": "Building regular reports or dashboards for managers",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "No indication of regular reporting or dashboards for managers."
+          },
+          {
+            "requirement": "Working knowledge of data protection (GDPR) when handling employee data",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "No mention of GDPR or data protection knowledge."
+          }
+        ],
+        "nice_to_have": [
+          {
+            "requirement": "SQL",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "SQL not referenced."
+          },
+          {
+            "requirement": "Power BI or Tableau",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "Power BI or Tableau not mentioned."
+          },
+          {
+            "requirement": "Python",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "Python not mentioned."
+          },
+          {
+            "requirement": "Experience with an HR system such as Workday or SAP SuccessFactors",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "No HR system experience listed."
+          },
+          {
+            "requirement": "CIPD qualification",
+            "verdict": "not met",
+            "quotes": [],
+            "reason": "CIPD qualification not listed."
+          }
+        ]
+      },
+      "flags": [],
+      "resolved": [
+        "Inconsistent: scores ranged 0.0-8.8"
+      ],
+      "revise_rounds": 2,
+      "notes": [],
+      "needs_human_review": false
+    }
+  ]
+}

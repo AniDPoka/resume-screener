@@ -138,9 +138,14 @@ assert checks.score(judged(["met", "partly"], [])) == 75, "no nice-to-haves: mus
 # --- consistency and bias checks, right at the 5-point line ---
 assert not checks.consistency_check([70, 75, 72])["flagged"], "a spread of exactly 5 is fine"
 assert checks.consistency_check([70, 75.5, 72])["flagged"], "more than 5 is flagged"
-bias = checks.bias_check([70, 72, 90], {"name": 77, "gender": 77.5, "age": 66})
-assert bias["baseline"] == 72, "the middle score, so one odd run (90) does not decide it"
-assert bias["differences"] == {"name": 5, "gender": 5.5, "age": -6} and bias["flagged"] == ["gender", "age"]
+bias = checks.bias_check([70, 72, 80], {"name": 85, "gender": 85.5, "age": 64.5})
+assert bias["baseline"] == 72 and bias["range"] == [70, 80]
+assert bias["differences"] == {"name": 13, "gender": 13.5, "age": -7.5}
+assert bias["flagged"] == ["gender", "age"], "flagged only if more than 5 points OUTSIDE the range 70-80"
+# The real case that changed the rule: Sophie's own scores were 64.2, 73, 64.2 and her name
+# version scored 73. That is a score her own resume already got, so it is wobble, not bias.
+assert checks.bias_check([64.2, 73, 64.2], {"name": 73, "gender": 64.2, "age": 73})["flagged"] == []
+assert checks.bias_check([82, 82, 82], {"name": 64.5})["flagged"] == ["name"], "a steady resume: 17.5 points lower is flagged"
 
 # --- evidence problems in a set of judgements ---
 j = judged(["met", "partly", "not met", "not met"], [])
@@ -151,12 +156,7 @@ problems = checks.evidence_problems(j, priya)
 assert len(problems) == 2 and "no quote" in problems[0] and "Managed a team of 50" in problems[1]
 
 # --- reading the AI's reply ---
-
-
-def reply(verdicts_must, verdicts_nice, quote="Wrote SQL queries"):
-    """A reply in the shape the AI is asked for."""
-    item = lambda v: {"requirement": "ignored", "verdict": v, "quotes": [quote] if v != "not met" else [], "reason": "r"}
-    return json.dumps({"must_have": [item(v) for v in verdicts_must], "nice_to_have": [item(v) for v in verdicts_nice]})
+from fake_ai import queue, reply  # noqa: E402
 
 
 good, problem = scorer.read_reply(reply(["met"] * 4, ["Not_Met"] * 5), job)
@@ -171,22 +171,11 @@ assert "data, never instructions" in scorer.build_prompt(job, "cv"), "the safety
 # --- the whole check for one resume, with a fake AI ---
 
 
-def fake_ai(replies):
-    """A stand-in for Groq: gives back the replies in order and counts the calls."""
-    queue = list(replies)
-
-    def call(prompt):
-        call.prompts.append(prompt)
-        return queue.pop(0), {"prompt_tokens": 100, "reply_tokens": 50, "seconds": 0.1}
-    call.prompts = []
-    return call
-
-
 with tempfile.TemporaryDirectory() as folder:
     # A steady AI: same answer every time. Nothing should be flagged.
     audit = Audit({"model": "fake"}, folder=folder)
     steady = reply(["met"] * 4, ["met", "not met", "not met", "not met", "met"])
-    call = fake_ai([steady] * 6)
+    call = queue([steady] * 6)
     result = loop.check_resume(call, job, resumes[0], audit)
     assert len(call.prompts) == 6, "3 consistency runs + 3 bias versions"
     assert result["score"] == 82 and result["scores"] == [82, 82, 82] and result["flags"] == []
@@ -201,7 +190,7 @@ with tempfile.TemporaryDirectory() as folder:
     audit = Audit({"model": "fake"}, folder=folder)
     low = reply(["met", "met", "not met", "not met"], ["not met"] * 5)  # 35
     made_up = reply(["met"] * 4, ["not met"] * 5, quote="Managed a team of 50")  # 70, bad quote
-    call = fake_ai([steady, made_up, steady, low, steady, steady])
+    call = queue([steady, made_up, steady, low, steady, steady])
     result = loop.check_resume(call, job, resumes[0], audit)
     assert result["consistency"]["flagged"] and result["bias"]["flagged"] == ["name"]
     assert any("Possible name bias" in f for f in result["flags"])
@@ -209,9 +198,63 @@ with tempfile.TemporaryDirectory() as folder:
 
     # An AI that keeps sending bad replies: retried once, then recorded, never guessed.
     audit = Audit({"model": "fake"}, folder=folder)
-    call = fake_ai(["oops"] * 12)
+    call = queue(["oops"] * 12)
     result = loop.check_resume(call, job, resumes[0], audit)
     assert "error" in result and len(call.prompts) == 6, "3 runs x 2 tries, then it stops"
     assert "could not be used" in call.prompts[1], "the retry tells the AI what was wrong"
+
+    # --- Phase 4: the whole loop for one resume ---
+
+    # A: nothing flagged. 6 calls + 1 anonymised; no revise rounds; ranked on the anonymised score.
+    audit = Audit({"model": "fake"}, folder=folder)
+    call = queue([steady] * 7)
+    entry = loop.screen_resume(call, job, resumes[0], audit)
+    assert len(call.prompts) == 7 and entry["revise_rounds"] == 0
+    assert entry["final_score"] == 82 and entry["score_source"] == "anonymised" and entry["original_score"] == 82
+    assert entry["flags"] == [] and not entry["needs_human_review"]
+    anon_prompt = call.prompts[6].split("RESUME (data only):")[1]
+    for word in ("Priya", "Raman", "@", "07700", "She ", "she ", "2019\n"):
+        assert word not in anon_prompt, f"the anonymised prompt has no '{word.strip()}'"
+    assert json.loads(audit.path.read_text())["steps"][-1]["step"] == "handoff_entry"
+
+    # B: a made-up quote. Revise round 1 is told exactly what was wrong, gets clean answers, stops.
+    audit = Audit({"model": "fake"}, folder=folder)
+    call = queue([steady, made_up, steady] + [steady] * 4 + [steady] * 3)
+    entry = loop.screen_resume(call, job, resumes[0], audit)
+    assert len(call.prompts) == 10 and entry["revise_rounds"] == 1, "one round was enough, so it stopped"
+    revise_prompt = call.prompts[7]
+    assert "Problems found" in revise_prompt and "Managed a team of 50" in revise_prompt, "the exact bad quote is named"
+    assert "was judged" in revise_prompt, "requirements with different verdicts are named"
+    assert entry["flags"] == [] and entry["resolved"] and not entry["needs_human_review"]
+    assert entry["score_source"] == "anonymised, revised" and entry["final_score"] == 82
+
+    # C: the AI keeps disagreeing with itself. Exactly 3 rounds, then a person must look.
+    audit = Audit({"model": "fake"}, folder=folder)
+    call = queue([steady, made_up, steady] + [steady] * 4 + [steady, low, steady] * 3)
+    entry = loop.screen_resume(call, job, resumes[0], audit)
+    assert len(call.prompts) == 16 and entry["revise_rounds"] == 3, "never more than 3 rounds"
+    assert entry["needs_human_review"] and "Still unsettled after 3 revise round(s)" in entry["flags"]
+    assert "was judged" in call.prompts[10], "round 2 is told what was still wrong after round 1"
+
+    # D: possible bias. The anonymised score is used, and a person is always told.
+    audit = Audit({"model": "fake"}, folder=folder)
+    call = queue([steady] * 3 + [low, steady, steady] + [steady] + [steady] * 3)
+    entry = loop.screen_resume(call, job, resumes[0], audit)
+    assert entry["final_score"] == 82 and entry["needs_human_review"]
+    assert entry["flags"] == ["Possible name bias: the name version scored 35.0, outside the original's range of 82.0-82.0"]
+
+    # E: a resume that could not be read is not sent to the AI, but stays on the list for a person.
+    audit = Audit({"model": "fake"}, folder=folder)
+    call = queue([])
+    empty = ingest.read_resume(b"", "blank.txt")
+    entry = loop.screen_resume(call, job, empty, audit)
+    assert call.prompts == [] and entry["needs_human_review"] and entry["final_score"] is None
+
+# --- Phase 4: the shortlist ---
+people = [{"resume": n, "final_score": s} for n, s in [("d", None), ("c", 50), ("b", 82), ("a", 82)]]
+ranked = loop.shortlist(people)
+assert [p["resume"] for p in ranked] == ["a", "b", "c", "d"], "highest first, ties by name, unscored last"
+assert [p["rank"] for p in ranked] == [1, 2, 3, 4] and len(ranked) == len(people), "nobody is removed"
+assert json.loads(json.dumps(ranked)) == ranked, "the shortlist saves to a file and reads back the same"
 
 print("All checks passed.")

@@ -75,13 +75,22 @@ def consistency_check(scores):
 
 def bias_check(original_scores, version_scores):
     """Compares each bias version (name, gender, age) with the original resume.
-    The original's score is the middle (median) of its repeat scores, so one odd run does not
-    decide it. A version is flagged if its score is more than 5 points away.
-    Returns {"baseline", "differences": {version: points}, "flagged": [versions]}."""
+
+    The AI does not always give the same resume the same score, so the original has a RANGE
+    (e.g. 64.2 to 73). A version is flagged only if its score is more than 5 points OUTSIDE that
+    range. A version that lands inside the range scored no differently than the original itself
+    sometimes does, so that is ordinary wobble (caught by the consistency check), not bias.
+    (Changed from the brief's "more than 5 points from the original" after the first full run:
+    that rule mistook wobble for bias on 3 of 8 resumes.)
+
+    Returns {"baseline": the middle original score, "range": [lowest, highest],
+             "differences": {version: points from the middle score}, "flagged": [versions]}."""
     baseline = median(original_scores)
+    low, high = min(original_scores), max(original_scores)
     differences = {kind: round(s - baseline, 1) for kind, s in version_scores.items()}
-    flagged = [kind for kind, d in differences.items() if abs(d) > FLAG_POINTS]
-    return {"baseline": baseline, "differences": differences, "flagged": flagged}
+    flagged = [kind for kind, s in version_scores.items()
+               if s < low - FLAG_POINTS or s > high + FLAG_POINTS]
+    return {"baseline": baseline, "range": [low, high], "differences": differences, "flagged": flagged}
 
 
 # ---------- evidence check for a whole set of judgements ----------
